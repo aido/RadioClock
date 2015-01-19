@@ -17,369 +17,6 @@
 //  along with this program. If not, see http://www.gnu.org/licenses/
 
 #include "dcf77.h"
-#include <avr/eeprom.h>
-
-namespace Debug {
-    void debug_helper(char data) { Serial.print(data == 0? 'S': data == 1? '?': data - 2 + '0', 0); }
-
-    void bcddigit(uint8_t data) {
-        if (data <= 0x09) {
-            Serial.print(data, HEX);
-        } else {
-            Serial.print('?');
-        }
-    }
-
-    void bcddigits(uint8_t data) {
-        bcddigit(data >>  4);
-        bcddigit(data & 0xf);
-    }
-}
-
-namespace BCD {
-    void print(const bcd_t value) {
-        Serial.print(value.val >> 4 & 0xF, HEX);
-        Serial.print(value.val >> 0 & 0xF, HEX);
-    }
-
-    void increment(bcd_t &value) {
-        if (value.digit.lo < 9) {
-            ++value.digit.lo;
-        } else {
-            value.digit.lo = 0;
-
-            if (value.digit.hi < 9) {
-                ++value.digit.hi;
-            } else {
-                value.digit.hi = 0;
-            }
-        }
-    }
-
-    bcd_t int_to_bcd(const uint8_t value) {
-        const uint8_t hi = value / 10;
-
-        bcd_t result;
-        result.digit.hi = hi;
-        result.digit.lo = value-10*hi;
-
-        return result;
-    }
-
-    uint8_t bcd_to_int(const bcd_t value) {
-        return value.digit.lo + 10*value.digit.hi;
-    }
-
-    bool operator == (const bcd_t a, const bcd_t b) {
-        return a.val == b.val;
-    }
-    bool operator != (const bcd_t a, const bcd_t b) {
-        return a.val != b.val;
-    }
-    bool operator >= (const bcd_t a, const bcd_t b) {
-        return a.val >= b.val;
-    }
-    bool operator <= (const bcd_t a, const bcd_t b) {
-        return a.val <= b.val;
-    }
-    bool operator > (const bcd_t a, const bcd_t b) {
-        return a.val > b.val;
-    }
-    bool operator < (const bcd_t a, const bcd_t b) {
-        return a.val < b.val;
-    }
-}
-
-namespace Arithmetic_Tools {
-    template <uint8_t N> inline void bounded_increment(uint8_t &value) __attribute__((always_inline));
-    template <uint8_t N>
-    void bounded_increment(uint8_t &value) {
-        if (value >= 255 - N) { value = 255; } else { value += N; }
-    }
-
-    template <uint8_t N> inline void bounded_decrement(uint8_t &value) __attribute__((always_inline));
-    template <uint8_t N>
-    void bounded_decrement(uint8_t &value) {
-        if (value <= N) { value = 0; } else { value -= N; }
-    }
-
-    inline void bounded_add(uint8_t &value, const uint8_t amount) __attribute__((always_inline));
-    void bounded_add(uint8_t &value, const uint8_t amount) {
-        if (value >= 255-amount) { value = 255; } else { value += amount; }
-    }
-
-    inline void bounded_sub(uint8_t &value, const uint8_t amount) __attribute__((always_inline));
-    void bounded_sub(uint8_t &value, const uint8_t amount) {
-        if (value <= amount) { value = 0; } else { value -= amount; }
-    }
-
-    inline uint8_t bit_count(const uint8_t value) __attribute__((always_inline));
-    uint8_t bit_count(const uint8_t value) {
-        const uint8_t tmp1 = (value & 0b01010101) + ((value>>1) & 0b01010101);
-        const uint8_t tmp2 = (tmp1  & 0b00110011) + ((tmp1>>2) & 0b00110011);
-        return (tmp2 & 0x0f) + (tmp2>>4);
-    }
-
-    inline uint8_t parity(const uint8_t value) __attribute__((always_inline));
-    uint8_t parity(const uint8_t value) {
-        uint8_t tmp = value;
-
-        tmp = (tmp & 0xf) ^ (tmp >> 4);
-        tmp = (tmp & 0x3) ^ (tmp >> 2);
-        tmp = (tmp & 0x1) ^ (tmp >> 1);
-
-        return tmp;
-    }
-
-    void minimize(uint8_t &minimum, const uint8_t value) {
-        if (value < minimum) {
-            minimum = value;
-        }
-    }
-
-    void maximize(uint8_t &maximum, const uint8_t value) {
-        if (value > maximum) {
-            maximum = value;
-        }
-    }
-
-    uint8_t set_bit(const uint8_t data, const uint8_t number, const uint8_t value) {
-        return value? data|(1<<number): data&~(1<<number);
-    }
-}
-
-namespace Hamming {
-    template <uint8_t significant_bits>
-    void score (uint8_t &bin, const BCD::bcd_t input, const BCD::bcd_t candidate) {
-        using namespace Arithmetic_Tools;
-
-        const uint8_t the_score = significant_bits - bit_count(input.val ^ candidate.val);
-        bounded_add(bin, the_score);
-    }
-
-    template <typename bins_t>
-    void advance_tick(bins_t &bins) {
-        const uint8_t number_of_bins = sizeof(bins.data) / sizeof(bins.data[0]);
-        if (bins.tick < number_of_bins - 1) {
-            ++bins.tick;
-        } else {
-            bins.tick = 0;
-        }
-    }
-
-    template <typename bins_type, uint8_t significant_bits, bool with_parity>
-    void hamming_binning(bins_type &bins, const BCD::bcd_t input) {
-        using namespace Arithmetic_Tools;
-        using namespace BCD;
-
-        const uint8_t number_of_bins = sizeof(bins.data) / sizeof(bins.data[0]);
-
-        if (bins.max > 255-significant_bits) {
-            // If we know we can not raise the maximum any further we
-            // will lower the noise floor instead.
-            for (uint8_t bin_index = 0; bin_index <number_of_bins; ++bin_index) {
-                bounded_decrement<significant_bits>(bins.data[bin_index]);
-            }
-            bins.max -= significant_bits;
-            bounded_decrement<significant_bits>(bins.noise_max);
-        }
-
-        const uint8_t offset = number_of_bins-1-bins.tick;
-        uint8_t bin_index = offset;
-        // for minutes, hours have parity and start counting at 0
-        // for days, weeks, month we have no parity and start counting at 1
-        // for years and decades we have no parity and start counting at 0
-        bcd_t candidate;
-        candidate.val = (with_parity || number_of_bins == 10)? 0x00: 0x01;
-        for (uint8_t pass=0; pass < number_of_bins; ++pass) {
-
-            if (with_parity) {
-                candidate.bit.b7 = parity(candidate.val);
-                score<significant_bits>(bins.data[bin_index], input, candidate);
-                candidate.bit.b7 = 0;
-            } else {
-                score<significant_bits>(bins.data[bin_index], input, candidate);
-            }
-
-            bin_index = bin_index < number_of_bins-1? bin_index+1: 0;
-            increment(candidate);
-        }
-    }
-
-    template <typename bins_t>
-    void compute_max_index(bins_t &bins) {
-        const uint8_t number_of_bins = sizeof(bins.data) / sizeof(bins.data[0]);
-
-        bins.noise_max = 0;
-        bins.max = 0;
-        bins.max_index = 255;
-        for (uint8_t index = 0; index < number_of_bins; ++index) {
-            const uint8_t bin_data = bins.data[index];
-
-            if (bin_data >= bins.max) {
-                bins.noise_max = bins.max;
-                bins.max = bin_data;
-                bins.max_index = index;
-            } else if (bin_data > bins.noise_max) {
-                bins.noise_max = bin_data;
-            }
-        }
-    }
-
-    template <typename bins_t>
-    void setup(bins_t &bins) {
-        const uint8_t number_of_bins = sizeof(bins.data) / sizeof(bins.data[0]);
-
-        for (uint8_t index = 0; index < number_of_bins; ++index) {
-            bins.data[index] = 0;
-        }
-        bins.tick = 0;
-
-        bins.max = 0;
-        bins.max_index = 255;
-        bins.noise_max = 0;
-    }
-
-    template <typename bins_t>
-    BCD::bcd_t get_time_value(const bins_t &bins) {
-        // there is a trade off involved here:
-        //    low threshold --> lock will be detected earlier
-        //    low threshold --> if lock is not clean output will be garbled
-        //    a proper lock will fix the issue
-        //    the question is: which start up behaviour do we prefer?
-        const uint8_t threshold = 2;
-
-        const uint8_t number_of_bins = sizeof(bins.data) / sizeof(bins.data[0]);
-        const uint8_t offset = (number_of_bins == 60 || number_of_bins == 24 || number_of_bins == 10)? 0x00: 0x01;
-
-        if (bins.max-bins.noise_max >= threshold) {
-            return BCD::int_to_bcd((bins.max_index + bins.tick + 1) % number_of_bins + offset);
-        } else {
-            BCD::bcd_t undefined;
-            undefined.val = 0xff;
-            return undefined;
-        }
-    }
-
-    template <typename bins_t>
-    void get_quality(const bins_t bins, Hamming::lock_quality_t &lock_quality) {
-        const uint8_t prev_SREG = SREG;
-        cli();
-        lock_quality.lock_max = bins.max;
-        lock_quality.noise_max = bins.noise_max;
-        SREG = prev_SREG;
-    }
-
-    template <typename bins_t>
-    uint8_t get_quality_factor(const bins_t bins) {
-        const uint8_t prev_SREG = SREG;
-        cli();
-
-        uint8_t quality_factor;
-        if (bins.max <= bins.noise_max) {
-            quality_factor = 0;
-        } else {
-            const uint16_t delta = bins.max - bins.noise_max;
-            // we define the quality factor as
-            //   (delta) / ld (max + 3)
-
-            // unfortunately this is prohibitive expensive to compute
-
-            // --> we need some shortcuts
-            // --> we will cheat a lot
-
-            // lookup for ld(n):
-            //   4 -->  2,  6 -->  2.5,   8 -->  3,  12 -->  3.5
-            // above 16 --> only count the position of the leading digit
-
-            if (bins.max >= 32-3) {
-                // delta / ld(bins.max+3) ~ delta / ld(bins.max)
-                uint16_t max = bins.max;
-                uint8_t log2 = 0;
-                while (max > 0) {
-                    max >>= 1;
-                    ++log2;
-                }
-                log2 -= 1;
-                // now 15 >= log2 >= 5
-                // multiply by 256/log2 and divide by 256
-                const uint16_t multiplier =
-                    log2 > 12? log2 > 13? log2 > 14? 256/15
-                                                   : 256/14
-                                        : 256/13
-                             : log2 > 8 ? log2 > 10? log2 > 11? 256/12
-                                                              : 256/11
-                                                   : log2 >  9? 256/10
-                                                              : 256/ 9
-                                        : log2 >  6? log2 >  7? 256/ 8
-                                                              : 256/ 7
-                                                   : log2 >  5? 256/ 6
-                                                              : 256/ 5;
-                quality_factor = ((uint16_t)delta * multiplier) >> 8;
-
-            } else if (bins.max >= 16-3) {
-                // delta / 4
-                quality_factor = delta >> 2;
-
-
-            } else if (bins.max >= 12-3) {
-                // delta / 3.5
-                // we know delta <= max < 16-3 = 13 --> delta <= 12
-                quality_factor = delta >= 11? 3:
-                                 delta >=  7? 2:
-                                 delta >=  4? 1:
-                                              0;
-
-            } else if (bins.max >= 8-3) {
-                // delta / 3
-                // we know delta <= max < 12-3 = 9 --> delta <= 8
-                quality_factor = delta >= 6? 2:
-                                 delta >= 3? 1:
-                                             0;
-
-            } else if (bins.max >= 6-3) {
-                // delta / 2.5
-                // we know delta <= max < 8-3 = 5 --> delta <= 4
-                quality_factor = delta >= 3? 1: 0;
-
-            } else {  // if (bins.max >= 4-3) {
-                // delta / 2
-                quality_factor = delta >> 1;
-            }
-        }
-        SREG = prev_SREG;
-        return quality_factor;
-    }
-
-    template <typename bins_t>
-    void debug (const bins_t &bins) {
-        const uint8_t number_of_bins = sizeof(bins.data) / sizeof(bins.data[0]);
-        const bool uses_integrals = sizeof(bins.max) == 4;
-
-        Serial.print(get_time_value(bins).val, HEX);
-        Serial.print(F(" Tick: "));
-        Serial.print(bins.tick);
-        Serial.print(F(" Quality: "));
-        Serial.print(bins.max, DEC);
-        Serial.print('-');
-        Serial.print(bins.noise_max, DEC);
-        Serial.print(F(" Max Index: "));
-        Serial.print(bins.max_index, DEC);
-        Serial.print(F(" Quality Factor: "));
-        Serial.println(get_quality_factor(bins), DEC);
-        Serial.print('>');
-
-        for (uint8_t index = 0; index < number_of_bins; ++index) {
-            Serial.print(
-                (index == bins.max_index                                          ||
-                (!uses_integrals && index == (bins.max_index+1) % number_of_bins) ||
-                (uses_integrals && (index == (bins.max_index+10) % number_of_bins || (index == (bins.max_index+20) % number_of_bins))))
-                ? '|': ',');
-            Serial.print(bins.data[index], HEX);
-        }
-        Serial.println();
-    }
-}
 
 namespace DCF77_Encoder {
     using namespace DCF77;
@@ -417,7 +54,7 @@ namespace DCF77_Encoder {
     }
 
     uint8_t weekday(const DCF77::time_data_t &now) {  // attention: sunday will be ==0 instead of 7
-    using namespace BCD;
+
 
     if (now.day.val <= 0x31 && now.month.val <= 0x12 && now.year.val <= 0x99) {
         // This will compute the weekday for each year in 2001-2099.
@@ -882,7 +519,7 @@ namespace DCF77_Encoder {
     }
 
     void debug(const DCF77::time_data_t &clock) {
-        using namespace Debug;
+		using namespace Debug;
 
         Serial.print(F("  "));
         bcddigits(clock.year.val);
@@ -980,7 +617,6 @@ namespace DCF77_Naive_Bitstream_Decoder {
                 // leap seconds are seldom, in doubt we assume none is scheduled
                 now.leap_second_scheduled = naive_value && !is_value_bad;
                 break;
-
 
             case 20:
                 // start to decode minute data
@@ -1131,24 +767,6 @@ namespace DCF77_Flag_Decoder {
 }
 
 namespace DCF77_Decade_Decoder {
-    const uint8_t decades_per_century = 10;
-
-    typedef struct {
-        uint8_t data[decades_per_century];
-        uint8_t tick;
-
-        uint8_t noise_max;
-        uint8_t max;
-        uint8_t max_index;
-    } decade_bins;
-
-    decade_bins bins;
-
-
-    void advance_decade() {
-        Hamming::advance_tick(bins);
-    }
-
     void process_tick(const uint8_t current_second, const uint8_t tick_value) {
         using namespace Hamming;
 
@@ -1159,58 +777,16 @@ namespace DCF77_Decade_Decoder {
             case 55: decade_data.val += 0x02*tick_value; break;
             case 56: decade_data.val += 0x04*tick_value; break;
             case 57: decade_data.val += 0x08*tick_value;
-            hamming_binning<decade_bins, 4, false>(bins, decade_data); break;
+            hamming_binning<RaidoClock_Decade_Decoder::decade_bins, 4, false>(RaidoClock_Decade_Decoder::bins, decade_data); break;
 
-            case 58: compute_max_index(bins);
+            case 58: compute_max_index(RaidoClock_Decade_Decoder::bins);
             // fall through on purpose
             default: decade_data.val = 0;
         }
     }
-
-    void get_quality(Hamming::lock_quality_t &lock_quality) {
-        Hamming::get_quality(bins, lock_quality);
-    }
-
-    uint8_t get_quality_factor() {
-        return Hamming::get_quality_factor(bins);
-    }
-
-    BCD::bcd_t get_decade() {
-        return Hamming::get_time_value(bins);
-    }
-
-    void setup() {
-        Hamming::setup(bins);
-    }
-
-    void debug() {
-        Serial.print(F("Decade: "));
-        Hamming::debug(bins);
-    }
 }
 
 namespace DCF77_Year_Decoder {
-    const uint8_t years_per_century = 10;
-
-    typedef struct {
-        uint8_t data[years_per_century];
-        uint8_t tick;
-
-        uint8_t noise_max;
-        uint8_t max;
-        uint8_t max_index;
-    } year_bins;
-
-    year_bins bins;
-
-
-    void advance_year() {
-        Hamming::advance_tick(bins);
-        if (Hamming::get_time_value(bins).val == 0) {
-            DCF77_Decade_Decoder::advance_decade();
-        }
-    }
-
     void process_tick(const uint8_t current_second, const uint8_t tick_value) {
         using namespace Hamming;
 
@@ -1221,76 +797,18 @@ namespace DCF77_Year_Decoder {
             case 51: year_data.val +=  0x2*tick_value; break;
             case 52: year_data.val +=  0x4*tick_value; break;
             case 53: year_data.val +=  0x8*tick_value;
-            hamming_binning<year_bins, 4, false>(bins, year_data); break;
+            hamming_binning<RadioClock_Year_Decoder::year_bins, 4, false>(RadioClock_Year_Decoder::bins, year_data); break;
 
-            case 54: compute_max_index(bins);
+            case 54: compute_max_index(RadioClock_Year_Decoder::bins);
             // fall through on purpose
             default: year_data.val = 0;
         }
 
         DCF77_Decade_Decoder::process_tick(current_second, tick_value);
     }
-
-    void get_quality(Hamming::lock_quality_t &lock_quality) {
-        Hamming::get_quality(bins, lock_quality);
-
-        Hamming::lock_quality_t decade_lock_quality;
-        DCF77_Decade_Decoder::get_quality(decade_lock_quality);
-
-        Arithmetic_Tools::minimize(lock_quality.lock_max, decade_lock_quality.lock_max);
-        Arithmetic_Tools::maximize(lock_quality.noise_max, decade_lock_quality.noise_max);
-    }
-
-    uint8_t get_quality_factor() {
-        const uint8_t qf_years = Hamming::get_quality_factor(bins);
-        const uint8_t qf_decades = DCF77_Decade_Decoder::get_quality_factor();
-        return min(qf_years, qf_decades);
-    }
-
-    BCD::bcd_t get_year() {
-        BCD::bcd_t year = Hamming::get_time_value(bins);
-        BCD::bcd_t decade = DCF77_Decade_Decoder::get_decade();
-
-        if (year.val == 0xff || decade.val == 0xff) {
-            // undefined handling
-            year.val = 0xff;
-        } else {
-            year.val += decade.val << 4;
-        }
-        return year;
-    }
-
-    void setup() {
-        Hamming::setup(bins);
-        DCF77_Decade_Decoder::setup();
-    }
-
-    void debug() {
-        Serial.print(F("Year: "));
-        Hamming::debug(bins);
-        DCF77_Decade_Decoder::debug();
-    }
 }
 
 namespace DCF77_Month_Decoder {
-    const uint8_t months_per_year = 12;
-
-    typedef struct {
-        uint8_t data[months_per_year];
-        uint8_t tick;
-
-        uint8_t noise_max;
-        uint8_t max;
-        uint8_t max_index;
-    } month_bins;
-
-    month_bins bins;
-
-
-    void advance_month() {
-        Hamming::advance_tick(bins);
-    }
-
     void process_tick(const uint8_t current_second, const uint8_t tick_value) {
         using namespace Hamming;
 
@@ -1302,55 +820,16 @@ namespace DCF77_Month_Decoder {
             case 47: month_data.val +=  0x4*tick_value; break;
             case 48: month_data.val +=  0x8*tick_value; break;
             case 49: month_data.val += 0x10*tick_value;
-            hamming_binning<month_bins, 5, false>(bins, month_data); break;
+            hamming_binning<RadioClock_Month_Decoder::month_bins, 5, false>(RadioClock_Month_Decoder::bins, month_data); break;
 
-            case 50: compute_max_index(bins);
+            case 50: compute_max_index(RadioClock_Month_Decoder::bins);
             // fall through on purpose
             default: month_data.val = 0;
         }
     }
-
-    void get_quality(Hamming::lock_quality_t &lock_quality) {
-        Hamming::get_quality(bins, lock_quality);
-    }
-
-    uint8_t get_quality_factor() {
-        return Hamming::get_quality_factor(bins);
-    }
-
-    BCD::bcd_t get_month() {
-        return Hamming::get_time_value(bins);
-    }
-
-    void setup() {
-        Hamming::setup(bins);
-    }
-
-    void debug() {
-        Serial.print(F("Month: "));
-        Hamming::debug(bins);
-    }
 }
 
 namespace DCF77_Weekday_Decoder {
-    const uint8_t weekdays_per_week = 7;
-
-    typedef struct {
-        uint8_t data[weekdays_per_week];
-        uint8_t tick;
-
-        uint8_t noise_max;
-        uint8_t max;
-        uint8_t max_index;
-    } weekday_bins;
-
-    weekday_bins bins;
-
-
-    void advance_weekday() {
-        Hamming::advance_tick(bins);
-    }
-
     void process_tick(const uint8_t current_second, const uint8_t tick_value) {
         using namespace Hamming;
 
@@ -1360,54 +839,15 @@ namespace DCF77_Weekday_Decoder {
             case 42: weekday_data.val +=      tick_value; break;
             case 43: weekday_data.val +=  0x2*tick_value; break;
             case 44: weekday_data.val +=  0x4*tick_value;
-            hamming_binning<weekday_bins, 3, false>(bins, weekday_data); break;
-            case 45: compute_max_index(bins);
+            hamming_binning<RadioClock_Weekday_Decoder::weekday_bins, 3, false>(RadioClock_Weekday_Decoder::bins, weekday_data); break;
+            case 45: compute_max_index(RadioClock_Weekday_Decoder::bins);
             // fall through on purpose
             default: weekday_data.val = 0;
         }
     }
-
-    void get_quality(Hamming::lock_quality_t &lock_quality) {
-        Hamming::get_quality(bins, lock_quality);
-    }
-
-    uint8_t get_quality_factor() {
-        return Hamming::get_quality_factor(bins);
-    }
-
-    BCD::bcd_t get_weekday() {
-        return Hamming::get_time_value(bins);
-    }
-
-    void setup() {
-        Hamming::setup(bins);
-    }
-
-    void debug() {
-        Serial.print(F("Weekday: "));
-        Hamming::debug(bins);
-    }
 }
 
 namespace DCF77_Day_Decoder {
-    const uint8_t days_per_month = 31;
-
-    typedef struct {
-        uint8_t data[days_per_month];
-        uint8_t tick;
-
-        uint8_t noise_max;
-        uint8_t max;
-        uint8_t max_index;
-    } day_bins;
-
-    day_bins bins;
-
-
-    void advance_day() {
-        Hamming::advance_tick(bins);
-    }
-
     void process_tick(const uint8_t current_second, const uint8_t tick_value) {
         using namespace Hamming;
 
@@ -1420,54 +860,15 @@ namespace DCF77_Day_Decoder {
             case 39: day_data.val +=  0x8*tick_value; break;
             case 40: day_data.val += 0x10*tick_value; break;
             case 41: day_data.val += 0x20*tick_value;
-            hamming_binning<day_bins, 6, false>(bins, day_data); break;
-            case 42: compute_max_index(bins);
+            hamming_binning<RadioClock_Day_Decoder::day_bins, 6, false>(RadioClock_Day_Decoder::bins, day_data); break;
+            case 42: compute_max_index(RadioClock_Day_Decoder::bins);
             // fall through on purpose
             default: day_data.val = 0;
         }
     }
-
-    void get_quality(Hamming::lock_quality_t &lock_quality) {
-        Hamming::get_quality(bins, lock_quality);
-    }
-
-    uint8_t get_quality_factor() {
-        return Hamming::get_quality_factor(bins);
-    }
-
-    BCD::bcd_t get_day() {
-        return Hamming::get_time_value(bins);
-    }
-
-    void setup() {
-        Hamming::setup(bins);
-    }
-
-    void debug() {
-        Serial.print(F("Day: "));
-        Hamming::debug(bins);
-    }
 }
 
 namespace DCF77_Hour_Decoder {
-    const uint8_t hours_per_day = 24;
-
-    typedef struct {
-        uint8_t data[hours_per_day];
-        uint8_t tick;
-
-        uint8_t noise_max;
-        uint8_t max;
-        uint8_t max_index;
-    } hour_bins;
-
-    hour_bins bins;
-
-
-    void advance_hour() {
-        Hamming::advance_tick(bins);
-    }
-
     void process_tick(const uint8_t current_second, const uint8_t tick_value) {
         using namespace Hamming;
 
@@ -1481,54 +882,16 @@ namespace DCF77_Hour_Decoder {
             case 33: hour_data.val += 0x10*tick_value; break;
             case 34: hour_data.val += 0x20*tick_value; break;
             case 35: hour_data.val += 0x80*tick_value;        // Parity !!!
-                    hamming_binning<hour_bins, 7, true>(bins, hour_data); break;
+                    hamming_binning<RadioClock_Hour_Decoder::hour_bins, 7, true>(RadioClock_Hour_Decoder::bins, hour_data); break;
 
-            case 36: compute_max_index(bins);
+            case 36: compute_max_index(RadioClock_Hour_Decoder::bins);
             // fall through on purpose
             default: hour_data.val = 0;
         }
     }
-
-    void get_quality(Hamming::lock_quality_t &lock_quality) {
-        Hamming::get_quality(bins, lock_quality);
-    }
-
-    uint8_t get_quality_factor() {
-        return Hamming::get_quality_factor(bins);
-    }
-
-    BCD::bcd_t get_hour() {
-        return Hamming::get_time_value(bins);
-    }
-
-    void setup() {
-        Hamming::setup(bins);
-    }
-
-    void debug() {
-        Serial.print(F("Hour: "));
-        Hamming::debug(bins);
-    }
 }
 
 namespace DCF77_Minute_Decoder {
-    const uint8_t minutes_per_hour = 60;
-
-    typedef struct {
-        uint8_t data[minutes_per_hour];
-        uint8_t tick;
-
-        uint8_t noise_max;
-        uint8_t max;
-        uint8_t max_index;
-    } minute_bins;
-
-    minute_bins bins;
-
-    void advance_minute() {
-        Hamming::advance_tick(bins);
-    }
-
     void process_tick(const uint8_t current_second, const uint8_t tick_value) {
         using namespace Hamming;
 
@@ -1543,55 +906,22 @@ namespace DCF77_Minute_Decoder {
             case 26: minute_data.val += 0x20*tick_value; break;
             case 27: minute_data.val += 0x40*tick_value; break;
             case 28: minute_data.val += 0x80*tick_value;        // Parity !!!
-                    hamming_binning<minute_bins, 8, true>(bins, minute_data); break;
-            case 29: compute_max_index(bins);
+                    hamming_binning<RadioClock_Minute_Decoder::minute_bins, 8, true>(RadioClock_Minute_Decoder::bins, minute_data); break;
+            case 29: compute_max_index(RadioClock_Minute_Decoder::bins);
             // fall through on purpose
             default: minute_data.val = 0;
         }
-    }
-
-    void setup() {
-        Hamming::setup(bins);
-    }
-
-    void get_quality(Hamming::lock_quality_t &lock_quality) {
-        Hamming::get_quality(bins, lock_quality);
-    }
-
-    uint8_t get_quality_factor() {
-        return Hamming::get_quality_factor(bins);
-    }
-
-    BCD::bcd_t get_minute() {
-        return Hamming::get_time_value(bins);
-    }
-
-    void debug() {
-        Serial.print(F("Minute: "));
-        Hamming::debug(bins);
     }
 }
 
 namespace DCF77_Second_Decoder {
     using namespace DCF77;
 
-    const uint8_t seconds_per_minute = 60;
     // this is a trick threshold
     //    lower it to get a faster second lock
     //    but then risk to garble the successive stages during startup
-    //    --> to low and total startup time will increase
+    //    --> too low and total startup time will increase
     const uint8_t lock_threshold = 12;
-
-    typedef struct {
-        uint8_t data[seconds_per_minute];
-        uint8_t tick;
-
-        uint8_t noise_max;
-        uint8_t max;
-        uint8_t max_index;
-    } sync_bins;
-
-    sync_bins bins;
 
     serialized_clock_stream convolution_kernel;
     // used to determine how many of the predicted bits are actually observed,
@@ -1621,47 +951,47 @@ namespace DCF77_Second_Decoder {
         using namespace Arithmetic_Tools;
 
         // determine sync lock
-        if (bins.max - bins.noise_max <= lock_threshold || get_second() == 3) {
+        if (RadioClock_Second_Decoder::bins.max - RadioClock_Second_Decoder::bins.noise_max <= lock_threshold || get_second() == 3) {
             // after a lock is acquired this happens only once per minute and it is
             // reasonable cheap to process,
             //
             // that is: after we have a "lock" this will be processed whenever
             // the sync mark was detected
 
-            Hamming::compute_max_index(bins);
+            Hamming::compute_max_index(RadioClock_Second_Decoder::bins);
 
             const uint8_t convolution_weight = 50;
-            if (bins.max > 255-convolution_weight) {
+            if (RadioClock_Second_Decoder::bins.max > 255-convolution_weight) {
                 // If we know we can not raise the maximum any further we
                 // will lower the noise floor instead.
-                for (uint8_t bin_index = 0; bin_index < seconds_per_minute; ++bin_index) {
-                    bounded_decrement<convolution_weight>(bins.data[bin_index]);
+                for (uint8_t bin_index = 0; bin_index < RadioClock_Second_Decoder::seconds_per_minute; ++bin_index) {
+                    bounded_decrement<convolution_weight>(RadioClock_Second_Decoder::bins.data[bin_index]);
                 }
-                bins.max -= convolution_weight;
-                bounded_decrement<convolution_weight>(bins.noise_max);
+                RadioClock_Second_Decoder::bins.max -= convolution_weight;
+                bounded_decrement<convolution_weight>(RadioClock_Second_Decoder::bins.noise_max);
             }
 
             buffered_match = prediction_match;
         }
 
         if (tick_data == sync_mark) {
-            bounded_increment<6>(bins.data[bins.tick]);
-            if (bins.tick == bins.max_index) {
+            bounded_increment<6>(RadioClock_Second_Decoder::bins.data[RadioClock_Second_Decoder::bins.tick]);
+            if (RadioClock_Second_Decoder::bins.tick == RadioClock_Second_Decoder::bins.max_index) {
                 prediction_match += 6;
             }
         } else if (tick_data == short_tick || tick_data == long_tick) {
             uint8_t decoded_bit = (tick_data == long_tick);
 
             // bit 0 always 0
-            uint8_t bin = bins.tick>0? bins.tick-1: seconds_per_minute-1;
+            uint8_t bin = RadioClock_Second_Decoder::bins.tick>0? RadioClock_Second_Decoder::bins.tick-1: RadioClock_Second_Decoder::seconds_per_minute-1;
             const bool is_match = (decoded_bit == 0);
-            bins.data[bin] += is_match;
-            if (bin == bins.max_index) {
+            RadioClock_Second_Decoder::bins.data[bin] += is_match;
+            if (bin == RadioClock_Second_Decoder::bins.max_index) {
                 prediction_match += is_match;
             }
 
             // bit 16 is where the convolution kernel starts
-            bin = bin>15? bin-16: bin + seconds_per_minute-16;
+            bin = bin>15? bin-16: bin + RadioClock_Second_Decoder::seconds_per_minute-16;
             uint8_t current_byte_index = 0;
             uint8_t current_bit_index = 3;
             uint8_t current_byte_value = convolution_kernel.byte_0 >> 3;
@@ -1670,12 +1000,12 @@ namespace DCF77_Second_Decoder {
                     const uint8_t current_bit_value = current_byte_value & 1;
                     const bool is_match = (decoded_bit == current_bit_value);
 
-                    bins.data[bin] += is_match;
-                    if (bin == bins.max_index) {
+                    RadioClock_Second_Decoder::bins.data[bin] += is_match;
+                    if (bin == RadioClock_Second_Decoder::bins.max_index) {
                         prediction_match += is_match;
                     }
 
-                    bin = bin>0? bin-1: seconds_per_minute-1;
+                    bin = bin>0? bin-1: RadioClock_Second_Decoder::seconds_per_minute-1;
 
                     current_byte_value >>= 1;
                     ++current_bit_index;
@@ -1690,7 +1020,7 @@ namespace DCF77_Second_Decoder {
             }
         }
 
-        bins.tick = bins.tick<seconds_per_minute-1? bins.tick+1: 0;
+        RadioClock_Second_Decoder::bins.tick = RadioClock_Second_Decoder::bins.tick<RadioClock_Second_Decoder::seconds_per_minute-1? RadioClock_Second_Decoder::bins.tick+1: 0;
     }
 
     void sync_mark_binning(const uint8_t tick_data) {
@@ -1737,44 +1067,44 @@ namespace DCF77_Second_Decoder {
         // are more tricky.
         using namespace Arithmetic_Tools;
 
-        const uint8_t previous_tick = bins.tick>0? bins.tick-1: seconds_per_minute-1;
-        const uint8_t previous_21_tick = bins.tick>20? bins.tick-21: bins.tick + seconds_per_minute-21;
+        const uint8_t previous_tick = RadioClock_Second_Decoder::bins.tick>0? RadioClock_Second_Decoder::bins.tick-1: RadioClock_Second_Decoder::seconds_per_minute-1;
+        const uint8_t previous_21_tick = RadioClock_Second_Decoder::bins.tick>20? RadioClock_Second_Decoder::bins.tick-21: RadioClock_Second_Decoder::bins.tick + RadioClock_Second_Decoder::seconds_per_minute-21;
 
         switch (tick_data) {
             case sync_mark:
-                bounded_increment<6>(bins.data[bins.tick]);
+                bounded_increment<6>(RadioClock_Second_Decoder::bins.data[RadioClock_Second_Decoder::bins.tick]);
 
-                bounded_decrement<2>(bins.data[previous_tick]);
-                bounded_decrement<2>(bins.data[previous_21_tick]);
+                bounded_decrement<2>(RadioClock_Second_Decoder::bins.data[previous_tick]);
+                bounded_decrement<2>(RadioClock_Second_Decoder::bins.data[previous_21_tick]);
 
-                { const uint8_t next_tick = bins.tick< seconds_per_minute-1? bins.tick+1: 0;
-                bounded_decrement<2>(bins.data[next_tick]); }
+                { const uint8_t next_tick = RadioClock_Second_Decoder::bins.tick< RadioClock_Second_Decoder::seconds_per_minute-1? RadioClock_Second_Decoder::bins.tick+1: 0;
+                bounded_decrement<2>(RadioClock_Second_Decoder::bins.data[next_tick]); }
                 break;
 
             case short_tick:
-                bounded_increment<1>(bins.data[previous_tick]);
+                bounded_increment<1>(RadioClock_Second_Decoder::bins.data[previous_tick]);
 
-                bounded_decrement<2>(bins.data[bins.tick]);
-                bounded_decrement<2>(bins.data[previous_21_tick]);
+                bounded_decrement<2>(RadioClock_Second_Decoder::bins.data[RadioClock_Second_Decoder::bins.tick]);
+                bounded_decrement<2>(RadioClock_Second_Decoder::bins.data[previous_21_tick]);
                 break;
 
             case long_tick:
-                bounded_increment<1>(bins.data[previous_21_tick]);
+                bounded_increment<1>(RadioClock_Second_Decoder::bins.data[previous_21_tick]);
 
-                bounded_decrement<2>(bins.data[bins.tick]);
-                bounded_decrement<2>(bins.data[previous_tick]);
+                bounded_decrement<2>(RadioClock_Second_Decoder::bins.data[RadioClock_Second_Decoder::bins.tick]);
+                bounded_decrement<2>(RadioClock_Second_Decoder::bins.data[previous_tick]);
                 break;
 
             case undefined:
             default:
-                bounded_decrement<2>(bins.data[bins.tick]);
-                bounded_decrement<2>(bins.data[previous_tick]);
-                bounded_decrement<2>(bins.data[previous_21_tick]);
+                bounded_decrement<2>(RadioClock_Second_Decoder::bins.data[RadioClock_Second_Decoder::bins.tick]);
+                bounded_decrement<2>(RadioClock_Second_Decoder::bins.data[previous_tick]);
+                bounded_decrement<2>(RadioClock_Second_Decoder::bins.data[previous_21_tick]);
         }
-        bins.tick = bins.tick<seconds_per_minute-1? bins.tick+1: 0;
+        RadioClock_Second_Decoder::bins.tick = RadioClock_Second_Decoder::bins.tick<RadioClock_Second_Decoder::seconds_per_minute-1? RadioClock_Second_Decoder::bins.tick+1: 0;
 
         // determine sync lock
-        if (bins.max - bins.noise_max <=lock_threshold ||
+        if (RadioClock_Second_Decoder::bins.max - RadioClock_Second_Decoder::bins.noise_max <=lock_threshold ||
             get_second() == 3) {
             // after a lock is acquired this happens only once per minute and it is
             // reasonable cheap to process,
@@ -1782,20 +1112,12 @@ namespace DCF77_Second_Decoder {
             // that is: after we have a "lock" this will be processed whenever
             // the sync mark was detected
 
-            Hamming::compute_max_index(bins);
+            Hamming::compute_max_index(RadioClock_Second_Decoder::bins);
             }
     }
 
-    void get_quality(Hamming::lock_quality_t &lock_quality) {
-        Hamming::get_quality(bins, lock_quality);
-    }
-
-    uint8_t get_quality_factor() {
-        return Hamming::get_quality_factor(bins);
-    }
-
     uint8_t get_second() {
-        if (bins.max - bins.noise_max >= lock_threshold) {
+        if (RadioClock_Second_Decoder::bins.max - RadioClock_Second_Decoder::bins.noise_max >= lock_threshold) {
             // at least one sync mark and a 0 and a 1 seen
             // the threshold is tricky:
             //   higher --> takes longer to acquire an initial lock, but higher probability of an accurate lock
@@ -1807,8 +1129,8 @@ namespace DCF77_Second_Decoder {
             //   1 because the seconds already advanced by 1 tick
             //   1 because the sync mark is not second 0 but second 59
 
-            uint8_t second = 2*seconds_per_minute + bins.tick - 2 - bins.max_index;
-            while (second >= seconds_per_minute) { second-= seconds_per_minute; }
+            uint8_t second = 2*RadioClock_Second_Decoder::seconds_per_minute + RadioClock_Second_Decoder::bins.tick - 2 - RadioClock_Second_Decoder::bins.max_index;
+            while (second >= RadioClock_Second_Decoder::seconds_per_minute) { second-= RadioClock_Second_Decoder::seconds_per_minute; }
 
             return second;
         } else {
@@ -1823,23 +1145,19 @@ namespace DCF77_Second_Decoder {
             convolution_binning(tick_data);
         }
     }
-
-    void setup() {
-        Hamming::setup(bins);
-    }
-
+	
     void debug() {
         static uint8_t prev_tick;
 
-        if (prev_tick == bins.tick) {
+        if (prev_tick == RadioClock_Second_Decoder::bins.tick) {
             return;
         } else {
-            prev_tick = bins.tick;
+            prev_tick = RadioClock_Second_Decoder::bins.tick;
 
             Serial.print(F("second: "));
             Serial.print(get_second(), DEC);
             Serial.print(F(" Sync mark index "));
-            Hamming::debug(bins);
+            Hamming::debug(RadioClock_Second_Decoder::bins);
             Serial.print(F("Prediction Match: "));
             Serial.println(prediction_match, DEC);
             Serial.println();
@@ -1848,7 +1166,6 @@ namespace DCF77_Second_Decoder {
 }
 
 namespace DCF77_Local_Clock {
-    clock_state_t clock_state = useless;
     DCF77::output_handler_t output_handler = 0;
     DCF77::time_data_t local_clock_time;
     volatile bool second_toggle;
@@ -1885,20 +1202,20 @@ namespace DCF77_Local_Clock {
         uint8_t quality_factor = DCF77_Clock_Controller::get_overall_quality_factor();
 
         if (quality_factor > 1) {
-            if (clock_state != synced) {
-                DCF77_Clock_Controller::sync_achieved_event_handler();
-                clock_state = synced;
+            if (RadioClock_Local_Clock::clock_state != RadioClock::synced) {
+                RadioClock_Controller::sync_achieved_event_handler();
+                RadioClock_Local_Clock::clock_state = RadioClock::synced;
             }
-        } else if (clock_state == synced) {
-            DCF77_Clock_Controller::sync_lost_event_handler();
-            clock_state = locked;
+        } else if (RadioClock_Local_Clock::clock_state == RadioClock::synced) {
+            RadioClock_Controller::sync_lost_event_handler();
+            RadioClock_Local_Clock::clock_state = RadioClock::locked;
         }
 
         while (true) {
-            switch (clock_state) {
-                case useless: {
+            switch (RadioClock_Local_Clock::clock_state) {
+                case RadioClock::useless: {
                     if (quality_factor > 0) {
-                        clock_state = dirty;
+                        RadioClock_Local_Clock::clock_state = RadioClock::dirty;
                         break;  // goto dirty state
                     } else {
                         second_toggle = !second_toggle;
@@ -1906,9 +1223,9 @@ namespace DCF77_Local_Clock {
                     }
                 }
 
-                case dirty: {
+                case RadioClock::dirty: {
                     if (quality_factor == 0) {
-                        clock_state = useless;
+                        RadioClock_Local_Clock::clock_state = RadioClock::useless;
                         second_toggle = !second_toggle;
                         DCF77_Encoder::reset(local_clock_time);
                         return;
@@ -1921,7 +1238,7 @@ namespace DCF77_Local_Clock {
                     }
                 }
 
-                case synced: {
+                case RadioClock::synced: {
                     tick = 0;
                     local_clock_time = decoded_time;
                     DCF77_Clock_Controller::flush(decoded_time);
@@ -1929,8 +1246,8 @@ namespace DCF77_Local_Clock {
                     return;
                 }
 
-                case locked: {
-                    if (DCF77_Demodulator::get_quality_factor() > 10) {
+                case RadioClock::locked: {
+                    if ( RadioClock_Demodulator::get_quality_factor() > 10) {
                         // If we are not sure about leap seconds we will skip
                         // them. Worst case is that we miss a leap second due
                         // to noisy reception. This may happen at most once a
@@ -1946,15 +1263,15 @@ namespace DCF77_Local_Clock {
                         second_toggle = !second_toggle;
                         return;
                     } else {
-                        clock_state = unlocked;
-                        DCF77_Clock_Controller::phase_lost_event_handler();
+                        RadioClock_Local_Clock::clock_state = RadioClock::unlocked;
+                        RadioClock_Controller::phase_lost_event_handler();
                         unlocked_seconds = 0;
                         return;
                     }
                 }
 
-                case unlocked: {
-                    if (DCF77_Demodulator::get_quality_factor() > 10) {
+                case RadioClock::unlocked: {
+                    if (RadioClock_Demodulator::get_quality_factor() > 10) {
                         // Quality is somewhat reasonable again, check
                         // if the phase offset is in reasonable bounds.
                         if (200 < tick && tick < 800) {
@@ -1970,7 +1287,7 @@ namespace DCF77_Local_Clock {
                             //     missed leap seconds.
                             // We ignore this issue as it is not worse than running in
                             // free mode.
-                            clock_state = locked;
+                            RadioClock_Local_Clock::clock_state = RadioClock::locked;
                             if (tick < 200) {
                                 // time output was handled at most 200 ms before
                                 tick = 0;
@@ -1985,22 +1302,17 @@ namespace DCF77_Local_Clock {
                     }
                 }
 
-                case free: {
+                case RadioClock::free: {
                     return;
                 }
             }
         }
     }
 
-    uint32_t max_unlocked_seconds = 3000;
-    void set_has_tuned_clock() {
-        max_unlocked_seconds = 30000;
-    };
-
     void process_1_kHz_tick() {
         ++tick;
 
-        if (clock_state == synced || clock_state == locked) {
+        if (RadioClock_Local_Clock::clock_state == RadioClock::synced || RadioClock_Local_Clock::clock_state == RadioClock::locked) {
             // the important part is 150 < 200,
             // otherwise it will fall through to free immediately after changing to unlocked
             if (tick >= 1150) {
@@ -2009,12 +1321,12 @@ namespace DCF77_Local_Clock {
                 unlocked_seconds = 1;
 
                 // 1 Hz tick missing for more than 1200ms
-                clock_state = unlocked;
-                DCF77_Clock_Controller::phase_lost_event_handler();
+                RadioClock_Local_Clock::clock_state = RadioClock::unlocked;
+                RadioClock_Controller::phase_lost_event_handler();
             }
         }
 
-        if (clock_state == unlocked || clock_state == free) {
+        if (RadioClock_Local_Clock::clock_state == RadioClock::unlocked || RadioClock_Local_Clock::clock_state == RadioClock::free) {
             if (tick >= 1000) {
                 tick -= 1000;
 
@@ -2032,8 +1344,8 @@ namespace DCF77_Local_Clock {
                 second_toggle = !second_toggle;
 
                 ++unlocked_seconds;
-                if (unlocked_seconds > max_unlocked_seconds) {
-                    clock_state = free;
+                if (unlocked_seconds > RadioClock_Local_Clock::max_unlocked_seconds) {
+                    RadioClock_Local_Clock::clock_state = RadioClock::free;
                 }
             }
         }
@@ -2044,19 +1356,15 @@ namespace DCF77_Local_Clock {
         output_handler = new_output_handler;
     }
 
-    clock_state_t get_state() {
-        return clock_state;
-    }
-
     void debug() {
         Serial.print(F("Clock state: "));
-        switch (clock_state) {
-            case useless:  Serial.println(F("useless"));  break;
-            case dirty:    Serial.println(F("dirty"));    break;
-            case free:     Serial.println(F("free"));     break;
-            case unlocked: Serial.println(F("unlocked")); break;
-            case locked:   Serial.println(F("locked"));   break;
-            case synced:   Serial.println(F("synced"));   break;
+        switch (RadioClock_Local_Clock::clock_state) {
+            case RadioClock::useless:  Serial.println(F("useless"));  break;
+            case RadioClock::dirty:    Serial.println(F("dirty"));    break;
+            case RadioClock::free:     Serial.println(F("free"));     break;
+            case RadioClock::unlocked: Serial.println(F("unlocked")); break;
+            case RadioClock::locked:   Serial.println(F("locked"));   break;
+            case RadioClock::synced:   Serial.println(F("synced"));   break;
             default:       Serial.println(F("undefined"));
         }
         Serial.print(F("Tick: "));
@@ -2070,7 +1378,7 @@ namespace DCF77_Clock_Controller {
     DCF77::time_data_t decoded_time;
 
     void get_current_time(DCF77::time_data_t &now) {
-        auto_persist();
+        RadioClock_Controller::auto_persist();
         DCF77_Local_Clock::get_current_time(now);
     }
 
@@ -2078,32 +1386,17 @@ namespace DCF77_Clock_Controller {
         DCF77_Local_Clock::read_current_time(now);
     }
 
-    void auto_persist() {
-        DCF77_Frequency_Control::auto_persist();
-    }
-
-    void on_tuned_clock() {
-        DCF77_Demodulator::set_has_tuned_clock();
-        DCF77_Local_Clock::set_has_tuned_clock();
-    };
-
     void set_DCF77_encoder(DCF77::time_data_t &now) {
-        using namespace DCF77_Second_Decoder;
-        using namespace DCF77_Minute_Decoder;
-        using namespace DCF77_Hour_Decoder;
-        using namespace DCF77_Weekday_Decoder;
-        using namespace DCF77_Day_Decoder;
-        using namespace DCF77_Month_Decoder;
-        using namespace DCF77_Year_Decoder;
+		using namespace DCF77_Second_Decoder;
         using namespace DCF77_Flag_Decoder;
 
         now.second  = get_second();
-        now.minute  = get_minute();
-        now.hour    = get_hour();
-        now.weekday = get_weekday();
-        now.day     = get_day();
-        now.month   = get_month();
-        now.year    = get_year();
+        now.minute  = RadioClock_Minute_Decoder::get_minute();
+        now.hour    = RadioClock_Hour_Decoder::get_hour();
+        now.weekday = RadioClock_Weekday_Decoder::get_weekday();
+        now.day     = RadioClock_Day_Decoder::get_day();
+        now.month   = RadioClock_Month_Decoder::get_month();
+        now.year    = RadioClock_Year_Decoder::get_year();
 
         now.abnormal_transmitter_operation = get_abnormal_transmitter_operation();
         now.timezone_change_scheduled      = get_timezone_change_scheduled();
@@ -2198,8 +1491,8 @@ namespace DCF77_Clock_Controller {
             output_handler(time);
         }
 
-        if (decoded_time.second == 15 && DCF77_Local_Clock::clock_state != DCF77_Local_Clock::useless
-            && DCF77_Local_Clock::clock_state != DCF77_Local_Clock::dirty
+        if (decoded_time.second == 15 && RadioClock_Local_Clock::clock_state != RadioClock::useless
+            && RadioClock_Local_Clock::clock_state != RadioClock::dirty
         ) {
             DCF77_Second_Decoder::set_convolution_time(decoded_time);
         }
@@ -2208,7 +1501,7 @@ namespace DCF77_Clock_Controller {
     void process_1_kHz_tick_data(const uint8_t sampled_data) {
         DCF77_Demodulator::detector(sampled_data);
         DCF77_Local_Clock::process_1_kHz_tick();
-        DCF77_Frequency_Control::process_1_kHz_tick();
+        RadioClock_Frequency_Control::process_1_kHz_tick();
     }
 
     void set_output_handler(const DCF77_Clock::output_handler_t new_output_handler) {
@@ -2216,55 +1509,43 @@ namespace DCF77_Clock_Controller {
     }
 
     void get_quality(clock_quality_t &clock_quality) {
-        DCF77_Demodulator::get_quality(clock_quality.phase.lock_max, clock_quality.phase.noise_max);
-        DCF77_Second_Decoder::get_quality(clock_quality.second);
-        DCF77_Minute_Decoder::get_quality(clock_quality.minute);
-        DCF77_Hour_Decoder::get_quality(clock_quality.hour);
-        DCF77_Day_Decoder::get_quality(clock_quality.day);
-        DCF77_Weekday_Decoder::get_quality(clock_quality.weekday);
-        DCF77_Month_Decoder::get_quality(clock_quality.month);
-        DCF77_Year_Decoder::get_quality(clock_quality.year);
+        RadioClock_Demodulator::get_quality(clock_quality.phase.lock_max, clock_quality.phase.noise_max);
+        RadioClock_Second_Decoder::get_quality(clock_quality.second);
+        RadioClock_Minute_Decoder::get_quality(clock_quality.minute);
+        RadioClock_Hour_Decoder::get_quality(clock_quality.hour);
+        RadioClock_Day_Decoder::get_quality(clock_quality.day);
+        RadioClock_Weekday_Decoder::get_quality(clock_quality.weekday);
+        RadioClock_Month_Decoder::get_quality(clock_quality.month);
+        RadioClock_Year_Decoder::get_quality(clock_quality.year);
 
         DCF77_Flag_Decoder::get_quality(clock_quality.uses_summertime_quality,
                                         clock_quality.timezone_change_scheduled_quality,
                                         clock_quality.leap_second_scheduled_quality);
     }
 
-
-    void get_quality_factor(clock_quality_factor_t &clock_quality_factor) {
-        clock_quality_factor.phase   = DCF77_Demodulator::get_quality_factor();
-        clock_quality_factor.second  = DCF77_Second_Decoder::get_quality_factor();
-        clock_quality_factor.minute  = DCF77_Minute_Decoder::get_quality_factor();
-        clock_quality_factor.hour    = DCF77_Hour_Decoder::get_quality_factor();
-        clock_quality_factor.day     = DCF77_Day_Decoder::get_quality_factor();
-        clock_quality_factor.weekday = DCF77_Weekday_Decoder::get_quality_factor();
-        clock_quality_factor.month   = DCF77_Month_Decoder::get_quality_factor();
-        clock_quality_factor.year    = DCF77_Year_Decoder::get_quality_factor();
-    }
-
     uint8_t get_overall_quality_factor() {
         using namespace Arithmetic_Tools;
 
-        uint8_t quality_factor = DCF77_Demodulator::get_quality_factor();
-        minimize(quality_factor, DCF77_Second_Decoder::get_quality_factor());
-        minimize(quality_factor, DCF77_Minute_Decoder::get_quality_factor());
-        minimize(quality_factor, DCF77_Hour_Decoder::get_quality_factor());
+        uint8_t quality_factor = RadioClock_Demodulator::get_quality_factor();
+        minimize(quality_factor, RadioClock_Second_Decoder::get_quality_factor());
+        minimize(quality_factor, RadioClock_Minute_Decoder::get_quality_factor());
+        minimize(quality_factor, RadioClock_Hour_Decoder::get_quality_factor());
 
-        uint8_t date_quality_factor = DCF77_Day_Decoder::get_quality_factor();
-        minimize(date_quality_factor, DCF77_Month_Decoder::get_quality_factor());
-        minimize(date_quality_factor, DCF77_Year_Decoder::get_quality_factor());
+        uint8_t date_quality_factor = RadioClock_Day_Decoder::get_quality_factor();
+        minimize(date_quality_factor, RadioClock_Month_Decoder::get_quality_factor());
+        minimize(date_quality_factor, RadioClock_Year_Decoder::get_quality_factor());
 
-        const uint8_t weekday_quality_factor = DCF77_Weekday_Decoder::get_quality_factor();
+        const uint8_t weekday_quality_factor = RadioClock_Weekday_Decoder::get_quality_factor();
         if (date_quality_factor > 0 && weekday_quality_factor > 0) {
 
             DCF77::time_data_t now;
             now.second  = DCF77_Second_Decoder::get_second();
-            now.minute  = DCF77_Minute_Decoder::get_minute();
-            now.hour    = DCF77_Hour_Decoder::get_hour();
-            now.weekday = DCF77_Weekday_Decoder::get_weekday();
-            now.day     = DCF77_Day_Decoder::get_day();
-            now.month   = DCF77_Month_Decoder::get_month();
-            now.year    = DCF77_Year_Decoder::get_year();
+            now.minute  = RadioClock_Minute_Decoder::get_minute();
+            now.hour    = RadioClock_Hour_Decoder::get_hour();
+            now.day     = RadioClock_Day_Decoder::get_day();
+            now.weekday = RadioClock_Weekday_Decoder::get_weekday();
+            now.month   = RadioClock_Month_Decoder::get_month();
+            now.year    = RadioClock_Year_Decoder::get_year();
 
             BCD::bcd_t weekday = DCF77_Encoder::bcd_weekday(now);
             if (weekday.val == 0) {
@@ -2282,10 +1563,6 @@ namespace DCF77_Clock_Controller {
         return quality_factor;
     };
 
-    uint8_t get_clock_state() {
-        return DCF77_Local_Clock::get_state();
-    }
-
     uint8_t get_prediction_match() {
         return DCF77_Second_Decoder::get_prediction_match();
     }
@@ -2294,8 +1571,8 @@ namespace DCF77_Clock_Controller {
         clock_quality_t clock_quality;
         get_quality(clock_quality);
 
-        clock_quality_factor_t clock_quality_factor;
-        get_quality_factor(clock_quality_factor);
+        RadioClock_Controller::clock_quality_factor_t clock_quality_factor;
+        RadioClock_Controller::get_quality_factor(clock_quality_factor);
 
         Serial.print(F("Quality (p,s,m,h,wd,d,m,y,st,tz,ls,pm): "));
         Serial.print(get_overall_quality_factor(), DEC);
@@ -2373,80 +1650,8 @@ namespace DCF77_Clock_Controller {
         Serial.println(get_prediction_match(), DEC);
     }
 
-    void phase_lost_event_handler() {
-        // do not reset frequency control as a reset would also reset
-        // the current value for the measurement period length
-        DCF77_Second_Decoder::setup();
-        DCF77_Minute_Decoder::setup();
-        DCF77_Hour_Decoder::setup();
-        DCF77_Day_Decoder::setup();
-        DCF77_Weekday_Decoder::setup();
-        DCF77_Month_Decoder::setup();
-        DCF77_Year_Decoder::setup();
-    }
-
-    void sync_achieved_event_handler() {
-        // It can be argued if phase events instead of sync events
-        // should be used. In theory it would be sufficient to have a
-        // reasonable phase at the start and end of a calibration measurement
-        // interval.
-        // On the other hand a clean signal will provide a better calibration.
-        // Since it is sufficient if the calibration happens only once in a
-        // while we are satisfied with hooking at the sync events.
-        DCF77_Frequency_Control::qualify_calibration();
-    }
-
-    void sync_lost_event_handler() {
-        DCF77_Frequency_Control::unqualify_calibration();
-
-        bool reset_successors = (DCF77_Demodulator::get_quality_factor() == 0);
-        if (reset_successors) {
-            DCF77_Second_Decoder::setup();
-        }
-
-        reset_successors |= (DCF77_Second_Decoder::get_quality_factor() == 0);
-        if (reset_successors) {
-            DCF77_Minute_Decoder::setup();
-        }
-
-        reset_successors |= (DCF77_Minute_Decoder::get_quality_factor() == 0);
-        if (reset_successors) {
-            DCF77_Hour_Decoder::setup();
-        }
-
-        reset_successors |= (DCF77_Hour_Decoder::get_quality_factor() == 0);
-        if (reset_successors) {
-            DCF77_Weekday_Decoder::setup();
-            DCF77_Day_Decoder::setup();
-        }
-
-        reset_successors |= (DCF77_Hour_Decoder::get_quality_factor() == 0);
-        if (reset_successors) {
-            DCF77_Month_Decoder::setup();
-        }
-
-        reset_successors |= (DCF77_Month_Decoder::get_quality_factor() == 0);
-        if (reset_successors) {
-            DCF77_Year_Decoder::setup();
-        }
-    }
-
-    void setup() {
-        DCF77_Demodulator::setup();
-        phase_lost_event_handler();
-        DCF77_Frequency_Control::setup();
-    }
-
     void process_single_tick_data(const DCF77::tick_t tick_data) {
         using namespace DCF77;
-        using namespace DCF77_Second_Decoder;
-        using namespace DCF77_Minute_Decoder;
-        using namespace DCF77_Hour_Decoder;
-        using namespace DCF77_Weekday_Decoder;
-        using namespace DCF77_Day_Decoder;
-        using namespace DCF77_Month_Decoder;
-        using namespace DCF77_Year_Decoder;
-        using namespace DCF77_Flag_Decoder;
 
         time_data_t now;
         set_DCF77_encoder(now);
@@ -2463,22 +1668,22 @@ namespace DCF77_Clock_Controller {
             DCF77_Second_Decoder::process_single_tick_data(tick_data);
 
             if (now.second == 0) {
-                DCF77_Minute_Decoder::advance_minute();
+                RadioClock_Minute_Decoder::advance_minute();
                 if (now.minute.val == 0x00) {
 
                     // "while" takes automatically care of timezone change
-                    while (get_hour().val <= 0x23 && get_hour().val != now.hour.val) { advance_hour(); }
+                    while (RadioClock_Hour_Decoder::get_hour().val <= 0x23 && RadioClock_Hour_Decoder::get_hour().val != now.hour.val) { RadioClock_Hour_Decoder::advance_hour(); }
 
                     if (now.hour.val == 0x00) {
-                        if (get_weekday().val <= 0x07) { advance_weekday(); }
+                        if (RadioClock_Weekday_Decoder::get_weekday().val <= 0x07) { RadioClock_Weekday_Decoder::advance_weekday(); }
 
                         // "while" takes automatically care of different month lengths
-                        while (get_day().val <= 0x31 && get_day().val != now.day.val) { advance_day(); }
+                        while (RadioClock_Day_Decoder::get_day().val <= 0x31 && RadioClock_Day_Decoder::get_day().val != now.day.val) { RadioClock_Day_Decoder::advance_day(); }
 
                         if (now.day.val == 0x01) {
-                            if (get_month().val <= 0x12) { advance_month(); }
+                            if (RadioClock_Month_Decoder::get_month().val <= 0x12) { RadioClock_Month_Decoder::advance_month(); }
                             if (now.month.val == 0x01) {
-                                if (now.year.val <= 0x99) { advance_year(); }
+                                if (now.year.val <= 0x99) { RadioClock_Year_Decoder::advance_year(); }
                             }
                         }
                     }
@@ -2497,35 +1702,6 @@ namespace DCF77_Clock_Controller {
 }
 
 namespace DCF77_Demodulator {
-    using namespace DCF77;
-
-    const uint8_t bin_count = 100;
-
-    typedef struct {
-        uint16_t data[bin_count];
-        uint8_t tick;
-
-        uint32_t noise_max;
-        uint32_t max;
-        uint8_t max_index;
-    } phase_bins;
-
-    phase_bins bins;
-
-    const uint16_t samples_per_second = 1000;
-
-    const uint16_t samples_per_bin = samples_per_second / bin_count;
-    const uint16_t bins_per_10ms  = bin_count / 100;
-    const uint16_t bins_per_50ms  =  5 * bins_per_10ms;
-    const uint16_t bins_per_60ms  =  6 * bins_per_10ms;
-    const uint16_t bins_per_100ms = 10 * bins_per_10ms;
-    const uint16_t bins_per_200ms = 20 * bins_per_10ms;
-    const uint16_t bins_per_500ms = 50 * bins_per_10ms;
-
-    void setup() {
-        Hamming::setup(bins);
-    }
-
     void decode_220ms(const uint8_t input, const uint8_t bins_to_go) {
         // will be called for each bin during the "interesting" 220ms
 
@@ -2533,14 +1709,14 @@ namespace DCF77_Demodulator {
         static uint8_t decoded_data = 0;
 
         count += input;
-        if (bins_to_go >= bins_per_100ms + bins_per_10ms) {
-            if (bins_to_go == bins_per_100ms + bins_per_10ms) {
-                decoded_data = count > bins_per_50ms? 2: 0;
+        if (bins_to_go >= RadioClock_Demodulator::bins_per_100ms + RadioClock_Demodulator::bins_per_10ms) {
+            if (bins_to_go == RadioClock_Demodulator::bins_per_100ms + RadioClock_Demodulator::bins_per_10ms) {
+                decoded_data = count > RadioClock_Demodulator::bins_per_50ms? 2: 0;
                 count = 0;
             }
         } else {
             if (bins_to_go == 0) {
-                decoded_data += count > bins_per_50ms? 1: 0;
+                decoded_data += count > RadioClock_Demodulator::bins_per_50ms? 1: 0;
                 count = 0;
                 // pass control further
                 // decoded_data: 3 --> 1
@@ -2552,114 +1728,29 @@ namespace DCF77_Demodulator {
         }
     }
 
-    uint16_t wrap(const uint16_t value) {
-        // faster modulo function which avoids division
-        uint16_t result = value;
-        while (result >= bin_count) {
-            result-= bin_count;
-        }
-        return result;
-    }
-
-    void phase_detection() {
-        // We will compute the integrals over 200ms.
-        // The integrals is used to find the window of maximum signal strength.
-        uint32_t integral = 0;
-
-        for (uint16_t bin = 0; bin < bins_per_100ms; ++bin) {
-            integral += ((uint32_t)bins.data[bin])<<1;
-        }
-
-        for (uint16_t bin = bins_per_100ms; bin < bins_per_200ms; ++bin) {
-            integral += (uint32_t)bins.data[bin];
-        }
-
-        bins.max = 0;
-        bins.max_index = 0;
-        for (uint16_t bin = 0; bin < bin_count; ++bin) {
-            if (integral > bins.max) {
-                bins.max = integral;
-                bins.max_index = bin;
-            }
-
-            integral -= (uint32_t)bins.data[bin]<<1;
-            integral += (uint32_t)(bins.data[wrap(bin + bins_per_100ms)] +
-                                   bins.data[wrap(bin + bins_per_200ms)]);
-        }
-
-        // max_index indicates the position of the 200ms second signal window.
-        // Now how can we estimate the noise level? This is very tricky because
-        // averaging has already happened to some extend.
-
-        // The issue is that most of the undesired noise happens around the signal,
-        // especially after high->low transitions. So as an approximation of the
-        // noise I test with a phase shift of 200ms.
-        bins.noise_max = 0;
-        const uint16_t noise_index = wrap(bins.max_index + bins_per_200ms);
-
-        for (uint16_t bin = 0; bin < bins_per_100ms; ++bin) {
-            bins.noise_max += ((uint32_t)bins.data[wrap(noise_index + bin)])<<1;
-        }
-
-        for (uint16_t bin = bins_per_100ms; bin < bins_per_200ms; ++bin) {
-            bins.noise_max += (uint32_t)bins.data[wrap(noise_index + bin)];
-        }
-    }
-
-    // how many seconds may be cummulated
-    // this controls how slow the filter may be to follow a phase drift
-    // N times the clock precision shall be smaller 1/100
-    // clock 30 ppm => N < 300
-    uint16_t N = 300;
-    void set_has_tuned_clock() {
-        // will be called once crystal is tuned to better than 1 ppm.
-        N = 3600;
-    }
-
-    uint8_t phase_binning(const uint8_t input) {
-        Hamming::advance_tick(bins);
-
-        uint16_t& data = bins.data[bins.tick];
-
-        if (data > N) {
-            data = N;
-        }
-
-        if (input) {
-            if (data < N) {
-                ++data;
-            }
-        } else {
-            if (data > 0) {
-                --data;
-            }
-        }
-        return bins.tick;
-    }
-
     void detector_stage_2(const uint8_t input) {
-        const uint8_t current_bin = bins.tick;
+        const uint8_t current_bin = RadioClock_Demodulator::bins.tick;
 
         const uint8_t threshold = 30;
 
-        if (bins.max-bins.noise_max < threshold ||
-            wrap(bin_count + current_bin - bins.max_index) == 53) {
+        if (RadioClock_Demodulator::bins.max-RadioClock_Demodulator::bins.noise_max < threshold ||
+            RadioClock_Demodulator::wrap(RadioClock_Demodulator::bin_count + current_bin - RadioClock_Demodulator::bins.max_index) == 53) {
             // Phase detection far enough out of phase from anything that
             // might consume runtime otherwise.
-            phase_detection();
+            RadioClock_Demodulator::phase_detection();
         }
 
         static uint8_t bins_to_process = 0;
         if (bins_to_process == 0) {
-            if (wrap((bin_count + current_bin - bins.max_index)) <= bins_per_100ms ||   // current_bin at most 100ms after phase_bin
-                wrap((bin_count + bins.max_index - current_bin)) <= bins_per_10ms ) {   // current bin at most 10ms before phase_bin
+            if (RadioClock_Demodulator::wrap((RadioClock_Demodulator::bin_count + current_bin - RadioClock_Demodulator::bins.max_index)) <= RadioClock_Demodulator::bins_per_100ms ||   // current_bin at most 100ms after phase_bin
+                RadioClock_Demodulator::wrap((RadioClock_Demodulator::bin_count + RadioClock_Demodulator::bins.max_index - current_bin)) <= RadioClock_Demodulator::bins_per_10ms ) {   // current bin at most 10ms before phase_bin
                 // if phase bin varies to much during one period we will always be screwed in may ways...
 
                 // last 10ms of current second
                 DCF77_Clock_Controller::flush();
 
                 // start processing of bins
-                bins_to_process = bins_per_200ms + 2*bins_per_10ms;
+                bins_to_process = RadioClock_Demodulator::bins_per_200ms + 2*RadioClock_Demodulator::bins_per_10ms;
             }
         }
 
@@ -2679,115 +1770,18 @@ namespace DCF77_Demodulator {
         // detector stage 0: average 10 samples (per bin)
         average += sampled_data;
 
-        if (++current_sample >= samples_per_bin) {
+        if (++current_sample >= RadioClock_Demodulator::samples_per_bin) {
             // once all samples for the current bin are captured the bin gets updated
             // that is each 10ms control is passed to stage 1
-            const uint8_t input = (average> samples_per_bin/2);
+            const uint8_t input = (average> RadioClock_Demodulator::samples_per_bin/2);
 
-            phase_binning(input);
+            RadioClock_Demodulator::phase_binning(input);
 
             detector_stage_2(input);
 
             average = 0;
             current_sample = 0;
         }
-    }
-
-    void get_quality(uint32_t &lock_max, uint32_t &noise_max) {
-        const uint8_t prev_SREG = SREG;
-        cli();
-        lock_max = bins.max;
-        noise_max = bins.noise_max;
-        SREG = prev_SREG;
-    }
-
-    uint8_t get_quality_factor() {
-        const uint8_t prev_SREG = SREG;
-        cli();
-        uint32_t delta = bins.max - bins.noise_max;
-        SREG = prev_SREG;
-
-        uint8_t log2_plus_1 = 0;
-        uint32_t max = bins.max;
-        while (max) {
-            max >>= 1;
-            ++log2_plus_1;
-        }
-
-        // crude approximation for delta/log2(max)
-        while (log2_plus_1) {
-            log2_plus_1 >>= 1;
-            delta >>= 1;
-        }
-
-        return delta<256? delta: 255;
-    };
-
-    void debug() {
-        Serial.print(F("Phase: "));
-        Hamming::debug(bins);
-    }
-
-    void debug_verbose() {
-        // attention: debug_verbose is not really thread save
-        //            thus the output may contain unexpected artifacts
-        //            do not rely on the output of one debug cycle
-        debug();
-
-        Serial.println(F("max_index, max, index, integral"));
-
-        uint32_t integral = 0;
-        for (uint16_t bin = 0; bin < bins_per_100ms; ++bin) {
-            integral += ((uint32_t)bins.data[bin])<<1;
-        }
-
-        for (uint16_t bin = bins_per_100ms; bin < bins_per_200ms; ++bin) {
-            integral += (uint32_t)bins.data[bin];
-        }
-
-        uint32_t max = 0;
-        uint8_t max_index = 0;
-        for (uint16_t bin = 0; bin < bin_count; ++bin) {
-            if (integral > max) {
-                max = integral;
-                max_index = bin;
-            }
-
-            integral -= (uint32_t)bins.data[bin]<<1;
-            integral += (uint32_t)(bins.data[wrap(bin + bins_per_100ms)] +
-                                   bins.data[wrap(bin + bins_per_200ms)]);
-
-            Serial.print(max_index);
-            Serial.print(F(", "));
-            Serial.print(max);
-            Serial.print(F(", "));
-            Serial.print(bin);
-            Serial.print(F(", "));
-            Serial.println(integral);
-        }
-
-        // max_index indicates the position of the 200ms second signal window.
-        // Now how can we estimate the noise level? This is very tricky because
-        // averaging has already happened to some extend.
-
-        // The issue is that most of the undesired noise happens around the signal,
-        // especially after high->low transitions. So as an approximation of the
-        // noise I test with a phase shift of 200ms.
-        uint32_t noise_max = 0;
-        const uint16_t noise_index = wrap(max_index + bins_per_200ms);
-
-        for (uint16_t bin = 0; bin < bins_per_100ms; ++bin) {
-            noise_max += ((uint32_t)bins.data[wrap(noise_index + bin)])<<1;
-        }
-
-        for (uint16_t bin = bins_per_100ms; bin < bins_per_200ms; ++bin) {
-            noise_max += (uint32_t)bins.data[wrap(noise_index + bin)];
-        }
-
-        Serial.print(F("noise_index, noise_max: "));
-        Serial.print(noise_index);
-        Serial.print(F(", "));
-        Serial.println(noise_max);
     }
 }
 
@@ -2796,21 +1790,21 @@ namespace DCF77_Clock {
     typedef uint8_t (*input_provider_t)(void);
 
     void setup() {
-        DCF77_Clock_Controller::setup();
+        RadioClock_Controller::setup();
     }
 
-    void setup(const input_provider_t input_provider, const output_handler_t output_handler) {
-        DCF77_Clock_Controller::setup();
+    void setup(const RadioClock_Clock::input_provider_t input_provider, const output_handler_t output_handler) {
+        RadioClock_Controller::setup();
         DCF77_Clock_Controller::set_output_handler(output_handler);
-        DCF77_1_Khz_Generator::setup(input_provider);
+        RadioClock_1_Khz_Generator::setup(input_provider);
     };
 
     void debug() {
         DCF77_Clock_Controller::debug();
     }
 
-    void set_input_provider(const input_provider_t input_provider) {
-        DCF77_1_Khz_Generator::setup(input_provider);
+    void set_input_provider(const RadioClock_Clock::input_provider_t input_provider) {
+        RadioClock_1_Khz_Generator::setup(input_provider);
     }
 
     void set_output_handler(const output_handler_t output_handler) {
@@ -2818,7 +1812,7 @@ namespace DCF77_Clock {
     }
 
     void auto_persist() {
-        DCF77_Clock_Controller::auto_persist();
+        RadioClock_Controller::auto_persist();
     }
 
     void convert_time(const DCF77::time_data_t &current_time, time_t &now) {
@@ -2886,108 +1880,18 @@ namespace DCF77_Clock {
         return DCF77_Clock_Controller::get_overall_quality_factor();
     };
 
-    uint8_t get_clock_state() {
-        return DCF77_Clock_Controller::get_clock_state();
-    };
-
     uint8_t get_prediction_match() {
         return DCF77_Clock_Controller::get_prediction_match();
     };
 }
 
 namespace DCF77_Frequency_Control {
-    volatile int8_t confirmed_precision = 0;
-
-    // indicator if data may be persisted to EEPROM
-    volatile boolean data_pending = false;
-
-    // 2*tau_max = 32 000 000 centisecond ticks = 5333 minutes
-    volatile uint16_t elapsed_minutes;
-    // 60000 centiseconds = 10 minutes
-    // maximum drift in 32 000 000 centiseconds @ 900 ppm would result
-    // in a drift of +/- 28800 centiseconds
-    // thus it is uniquely measured if we know it mod 60 000
-    volatile uint16_t elapsed_centiseconds_mod_60000;
-    volatile uint8_t  start_minute_mod_10;
-
-
-    // Seconds 0 and 15 already receive more computation than
-    // other seconds thus calibration will run in second 5.
-    const int8_t calibration_second = 5;
-
-    volatile calibration_state_t calibration_state = {false ,false};
-    volatile int16_t deviation;
-
-    // get the adjust step that was used for the last adjustment
-    //   if there was no adjustment or if the phase drift was poor it will return 0
-    //   if the adjustment was from eeprom it will return the negative value of the
-    //   persisted adjust step
-    int8_t get_confirmed_precision() {
-        return confirmed_precision;
-    }
-
-    void qualify_calibration() {
-        calibration_state.qualified = true;
-    };
-
-    void unqualify_calibration() {
-        calibration_state.qualified = false;
-    };
-
-    int16_t compute_phase_deviation(uint8_t current_second, uint8_t current_minute_mod_10) {
-        int32_t deviation=
-             ((int32_t) elapsed_centiseconds_mod_60000) -
-             ((int32_t) current_second        - (int32_t) calibration_second)  * 100 -
-             ((int32_t) current_minute_mod_10 - (int32_t) start_minute_mod_10) * 6000;
-
-        // ensure we are between 30000 and -29999
-        while (deviation >  30000) { deviation -= 60000; }
-        while (deviation <=-30000) { deviation += 60000; }
-
-        return deviation;
-    }
-
-    calibration_state_t get_calibration_state() {
-        return *(calibration_state_t *)&calibration_state;
-    }
-
-    int16_t get_current_deviation() {
-        return deviation;
-    }
-
-    void adjust() {
-        int16_t total_adjust = DCF77_1_Khz_Generator::read_adjustment();
-
-        // The proper formular would be
-        //     int32_t adjust == (16000000 / (elapsed_minutes * 6000)) * new_deviation;
-        // The total error of the formula below is ~ 1/(3*elapsed_minutes)
-        //     which is  ~ 1/1000
-        // Also notice that 2667*deviation will not overflow even if the
-        // local clock would deviate by more than 400 ppm or 6 kHz
-        // from its nominal frequency.
-        // Finally notice that the frequency_offset will always be rounded towards zero_provider
-        // while the confirmed_precision is rounded away from zereo. The first should
-        // be considered a kind of relaxation while the second should be considered
-        // a defensive computation.
-        const int16_t frequency_offset = ((2667 * (int32_t)deviation) / elapsed_minutes);
-        // In doubt confirmed precision will be slightly larger than the true value
-        confirmed_precision = (((2667 - 1) * 1) + elapsed_minutes) / elapsed_minutes;
-        if (confirmed_precision == 0) { confirmed_precision = 1; }
-
-        total_adjust -= frequency_offset;
-
-        if (total_adjust >  max_total_adjust) { total_adjust =  max_total_adjust; }
-        if (total_adjust < -max_total_adjust) { total_adjust = -max_total_adjust; }
-
-        DCF77_1_Khz_Generator::adjust(total_adjust);
-    }
-
     void process_1_Hz_tick(const DCF77::time_data_t &decoded_time) {
         const int16_t deviation_to_trigger_readjust = 5;
 
-        deviation = compute_phase_deviation(decoded_time.second, decoded_time.minute.digit.lo);
-
-        if (decoded_time.second == calibration_second) {
+		RadioClock_Frequency_Control::set_current_deviation(RadioClock_Frequency_Control::compute_phase_deviation(decoded_time.second, decoded_time.minute.digit.lo));
+	
+        if (decoded_time.second == RadioClock_Frequency_Control::calibration_second) {
             // We might be in an unqualified state and thus the leap second information
             // we have might be wrong.
             // However if we fail to detect an actual leap second, calibration will be wrong
@@ -2999,266 +1903,49 @@ namespace DCF77_Frequency_Control {
                 // Handling them properly would be slightly more complicated.
                 // Since leap seconds may only happen every 3 months we just
                 // stop calibration for leap seconds and do nothing else.
-                calibration_state.running = false;
+                RadioClock_Frequency_Control::calibration_state.running = false;
             }
 
-            if (calibration_state.running) {
-                if (calibration_state.qualified) {
-                    if ((elapsed_minutes >= tau_min_minutes && abs(deviation) >= deviation_to_trigger_readjust) ||
-                        elapsed_minutes >= tau_max_minutes) {
-                        adjust();
+            if (RadioClock_Frequency_Control::calibration_state.running) {
+                if (RadioClock_Frequency_Control::calibration_state.qualified) {
+                    if ((RadioClock_Frequency_Control::elapsed_minutes >= RadioClock_Frequency_Control::tau_min_minutes && abs(RadioClock_Frequency_Control::get_current_deviation()) >= deviation_to_trigger_readjust) ||
+                        RadioClock_Frequency_Control::elapsed_minutes >= RadioClock_Frequency_Control::tau_max_minutes) {
+                        RadioClock_Frequency_Control::adjust();
 
                         // enqueue write to eeprom
-                        data_pending = true;
+                        RadioClock_Frequency_Control::data_pending = true;
                         // restart calibration next second
-                        calibration_state.running = false;
+                        RadioClock_Frequency_Control::calibration_state.running = false;
                     }
                 } else {
                     // unqualified
-                    if (elapsed_minutes >= tau_max_minutes) {
+                    if (RadioClock_Frequency_Control::elapsed_minutes >= RadioClock_Frequency_Control::tau_max_minutes) {
                         // running unqualified for more than tau minutes
                         //   --> the current calibration attempt is doomed
-                        calibration_state.running = false;
+                        RadioClock_Frequency_Control::calibration_state.running = false;
                     }
                     // else running but unqualified --> wait for better state
                 }
             } else {
                 // (calibration_state.running == false) --> waiting
-                if (calibration_state.qualified) {
-                    elapsed_centiseconds_mod_60000 = 0;
-                    elapsed_minutes = 0;
-                    start_minute_mod_10 = decoded_time.minute.digit.lo;
-                    calibration_state.running = true;
+                if (RadioClock_Frequency_Control::calibration_state.qualified) {
+                    RadioClock_Frequency_Control::elapsed_centiseconds_mod_60000 = 0;
+                    RadioClock_Frequency_Control::elapsed_minutes = 0;
+                    RadioClock_Frequency_Control::start_minute_mod_10 = decoded_time.minute.digit.lo;
+                    RadioClock_Frequency_Control::calibration_state.running = true;
                 }
                 // else waiting but unqualified --> nothing to do
             }
         }
     }
 
-    void process_1_kHz_tick() {
-        static uint8_t divider = 0;
-        if (divider < 9) {
-            ++divider;
-        }  else {
-            divider = 0;
-
-            if (elapsed_centiseconds_mod_60000 < 59999) {
-                ++elapsed_centiseconds_mod_60000;
-            } else {
-                elapsed_centiseconds_mod_60000 = 0;
-            }
-            if (elapsed_centiseconds_mod_60000 % 6000 == 0) {
-                ++elapsed_minutes;
-            }
-        }
-    }
-
-    // ID constants to see if EEPROM has already something stored
-    const char ID_u = 'u';
-    const char ID_k = 'k';
-    void persist_to_eeprom(const int8_t precision, const int16_t adjust) {
-        // this is slow, do not call during interrupt handling
-        uint16_t eeprom = eeprom_base;
-        eeprom_write_byte((uint8_t *)(eeprom++), ID_u);
-        eeprom_write_byte((uint8_t *)(eeprom++), ID_k);
-        eeprom_write_byte((uint8_t *)(eeprom++), (uint8_t) precision);
-        eeprom_write_byte((uint8_t *)(eeprom++), (uint8_t) precision);
-        eeprom_write_word((uint16_t *)eeprom, (uint16_t) adjust);
-        eeprom += 2;
-        eeprom_write_word((uint16_t *)eeprom, (uint16_t) adjust);
-    }
-
-    void read_from_eeprom(int8_t &precision, int16_t &adjust) {
-        uint16_t eeprom = eeprom_base;
-        if (eeprom_read_byte((const uint8_t *)(eeprom++)) == ID_u &&
-            eeprom_read_byte((const uint8_t *)(eeprom++)) == ID_k) {
-            uint8_t ee_precision = eeprom_read_byte((const uint8_t *)(eeprom++));
-            if (ee_precision == eeprom_read_byte((const uint8_t *)(eeprom++))) {
-                const uint16_t ee_adjust = eeprom_read_word((const uint16_t *)eeprom);
-                eeprom += 2;
-                if (ee_adjust == eeprom_read_word((const uint16_t *)eeprom)) {
-                    precision = (int8_t) ee_precision;
-                    adjust = (int16_t) ee_adjust;
-                    return;
-                }
-            }
-        }
-        precision = 0;
-        adjust = 0;
-    }
-
-    // do not call during ISRs
-    void auto_persist() {
-        // ensure that reading of data can not be interrupted!!
-        // do not write EEPROM while interrupts are blocked
-        int16_t adjust;
-        int8_t  precision;
-        const uint8_t prev_SREG = SREG;
-        cli();
-        if (data_pending && confirmed_precision > 0) {
-            precision = confirmed_precision;
-            adjust = DCF77_1_Khz_Generator::read_adjustment();
-        } else {
-            data_pending = false;
-        }
-        SREG = prev_SREG;
-        if (data_pending) {
-            int16_t ee_adjust;
-            int8_t  ee_precision;
-            read_from_eeprom(ee_precision, ee_adjust);
-
-            if (confirmed_precision < abs(ee_precision) ||        // - precision better than it used to be
-                ( abs(ee_precision) < 8 &&                        // - precision better than 8 Hz or 0.5 ppm @ 16 MHz
-                  abs(ee_adjust-adjust) > 8 )           ||        //   deviation worse than 8 Hz (thus 16 Hz or 1 ppm)
-                ( confirmed_precision == 1 &&                     // - It takes more than 1 day to arrive at 1 Hz precision
-                  abs(ee_adjust-adjust) > 0 ) )                   //   thus it acceptable to always write
-            {
-                cli();
-                const int16_t new_ee_adjust = adjust;
-                const int8_t  new_ee_precision = precision;
-                SREG = prev_SREG;
-                persist_to_eeprom(new_ee_precision, new_ee_adjust);
-                DCF77_Clock_Controller::on_tuned_clock();
-            }
-            data_pending = false;
-        }
-    }
-
-    void setup() {
-        int16_t adjust;
-        int8_t ee_precision;
-
-        read_from_eeprom(ee_precision, adjust);
-        if (ee_precision) {
-            DCF77_Clock_Controller::on_tuned_clock();
-        }
-
-        const uint8_t prev_SREG = SREG;
-        cli();
-
-        SREG = prev_SREG;
-        DCF77_1_Khz_Generator::adjust(adjust);
-    }
-
-    void debug() {
-        Serial.println(F("confirmed_precision ?? adjustment, deviation, elapsed"));
-        Serial.print(confirmed_precision);
-        Serial.print(F(" Hz "));
-        Serial.print(calibration_state.running? '@': '.');
-        Serial.print(calibration_state.qualified? '+': '-');
-        Serial.print(' ');
-
-        Serial.print(F(", "));
-        Serial.print(DCF77_1_Khz_Generator::read_adjustment());
-        Serial.print(F(" Hz, "));
-
-        Serial.print(deviation);
-        Serial.print(F(" ticks, "));
-
-        Serial.print(elapsed_minutes);
-        Serial.print(F(" min, "));
-
-        Serial.print(elapsed_centiseconds_mod_60000);
-        Serial.println(F(" cs mod 60000"));
-
-    }
 }
 
 namespace DCF77_1_Khz_Generator {
-    uint8_t zero_provider() {
-        return 0;
-    }
-
-    static DCF77_Clock::input_provider_t the_input_provider = zero_provider;
-    static int16_t adjust_pp16m = 0;
-    static int32_t cumulated_phase_deviation = 0;
-
-    void adjust(const int16_t pp16m) {
-        const uint8_t prev_SREG = SREG;
-        cli();
-        // positive_value --> increase frequency
-        adjust_pp16m = pp16m;
-        SREG = prev_SREG;
-    }
-
-    int16_t read_adjustment() {
-        // positive_value --> increase frequency
-        const uint8_t prev_SREG = SREG;
-        cli();
-        const int16_t pp16m = adjust_pp16m;
-        SREG = prev_SREG;
-        return pp16m;
-    }
-
-    void init_timer() {
-#if defined(__AVR_ATmega32U4__)
-        // Timer 3 CTC mode, prescaler 64
-        TCCR3B = (0<<WGM33) | (1<<WGM32) | (1<<CS31) | (1<<CS30);
-        TCCR3A = (0<<WGM31) | (0<<WGM30);
-
-        // 249 + 1 == 250 == 250 000 / 1000 =  (16 000 000 / 64) / 1000
-        OCR3A = 249;
-
-        // enable Timer 3 interrupts
-        TIMSK3 = (1<<OCIE3A);
-#else
-        // Timer 2 CTC mode, prescaler 64
-        TCCR2B = (0<<WGM22) | (1<<CS22);
-        TCCR2A = (1<<WGM21) | (0<<WGM20);
-
-        // 249 + 1 == 250 == 250 000 / 1000 =  (16 000 000 / 64) / 1000
-        OCR2A = 249;
-
-        // enable Timer 2 interrupts
-        TIMSK2 = (1<<OCIE2A);
-#endif
-    }
-
-    void stop_timer_0() {
-        // ensure that the standard timer interrupts will not
-        // mess with msTimer2
-        TIMSK0 = 0;
-    }
-
-    void setup(const DCF77_Clock::input_provider_t input_provider) {
-        init_timer();
-        stop_timer_0();
-        the_input_provider = input_provider;
-    }
-
     void isr_handler() {
-        cumulated_phase_deviation += adjust_pp16m;
-        // 1 / 250 / 64000 = 1 / 16 000 000
-        if (cumulated_phase_deviation >= 64000) {
-            cumulated_phase_deviation -= 64000;
-            // cumulated drift exceeds 1 timer step (4 microseconds)
-            // drop one timer step to realign
-#if defined(__AVR_ATmega32U4__)
-            OCR3A = 248;
-#else
-            OCR2A = 248;
-#endif
-        } else
-        if (cumulated_phase_deviation <= -64000) {
-            // cumulated drift exceeds 1 timer step (4 microseconds)
-            // insert one timer step to realign
-            cumulated_phase_deviation += 64000;
-#if defined(__AVR_ATmega32U4__)
-            OCR3A = 250;
-#else
-            OCR2A = 250;
-#endif
-        } else {
-            // 249 + 1 == 250 == 250 000 / 1000 =  (16 000 000 / 64) / 1000
-#if defined(__AVR_ATmega32U4__)
-            OCR3A = 249;
-#else
-            OCR2A = 249;
-#endif
-        }
-
-        DCF77_Clock_Controller::process_1_kHz_tick_data(the_input_provider());
-    }
+		RadioClock_1_Khz_Generator::isr_handler();
+		DCF77_Clock_Controller::process_1_kHz_tick_data(RadioClock_1_Khz_Generator::the_input_provider());
+	}
 }
 
 #if defined(__AVR_ATmega32U4__)

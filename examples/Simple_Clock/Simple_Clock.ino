@@ -1,7 +1,7 @@
 //
 //  www.blinkenlight.net
 //
-//  Copyright 2014 Udo Klein
+//  Copyright 2015 Udo Klein
 //
 //  This program is free software: you can redistribute it and/or modify
 //  it under the terms of the GNU General Public License as published by
@@ -64,9 +64,9 @@ void setup() {
     // Wait till clock is synced, depending on the signal quality this may take
     // rather long. About 5 minutes with a good signal, 30 minutes or longer
     // with a bad signal
-    for (uint8_t state = DCF77::useless;
-         state == DCF77::useless || state == DCF77::dirty;
-         state = DCF77_Clock::get_clock_state()) {
+    for (uint8_t state = RadioClock::useless;
+         state == RadioClock::useless || state == RadioClock::dirty;
+         state = RadioClock_Clock::get_clock_state()) {
 
         // wait for next sec
         DCF77_Clock::time_t now;
@@ -93,11 +93,11 @@ void loop() {
 
     DCF77_Clock::get_current_time(now);
     if (now.month.val > 0) {
-        switch (DCF77_Clock::get_clock_state()) {
-            case DCF77::useless: Serial.print(F("useless ")); break;
-            case DCF77::dirty:   Serial.print(F("dirty:  ")); break;
-            case DCF77::synced:  Serial.print(F("synced: ")); break;
-            case DCF77::locked:  Serial.print(F("locked: ")); break;
+        switch (RadioClock_Clock::get_clock_state()) {
+            case RadioClock::useless: Serial.print(F("useless ")); break;
+            case RadioClock::dirty:   Serial.print(F("dirty:  ")); break;
+            case RadioClock::synced:  Serial.print(F("synced: ")); break;
+            case RadioClock::locked:  Serial.print(F("locked: ")); break;
         }
         Serial.print(' ');
 

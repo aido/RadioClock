@@ -1325,8 +1325,8 @@ namespace parser {
 }
 
 uint8_t lock_progress() {
-    DCF77_Clock_Controller::clock_quality_factor_t quality;
-    DCF77_Clock_Controller::get_quality_factor(quality);
+    RadioClock_Controller::clock_quality_factor_t quality;
+    RadioClock_Controller::get_quality_factor(quality);
 
     return
         (quality.phase   > 0) +
@@ -1376,9 +1376,9 @@ void setup() {
     // Wait till clock is synced, depending on the signal quality this may take
     // rather long. About 5 minutes with a good signal, 30 minutes or longer
     // with a bad signal
-    for (uint8_t state = DCF77::useless;
-         state == DCF77::useless || state == DCF77::dirty;
-         state = DCF77_Clock::get_clock_state()) {
+    for (uint8_t state = RadioClock::useless;
+         state == RadioClock::useless || state == RadioClock::dirty;
+         state = RadioClock_Clock::get_clock_state()) {
 
         // wait for next sec
         DCF77_Clock::time_t now;
@@ -1414,14 +1414,14 @@ void loop() {
         DCF77_Clock::time_t now;
         DCF77_Clock::read_current_time(now);
         if (now.month.val > 0) {
-            const uint8_t state = DCF77_Clock::get_clock_state();
-            if (state != DCF77::useless) {
+            const uint8_t state = RadioClock_Clock::get_clock_state();
+            if (state != RadioClock::useless) {
                 if (!parser::parser_controled_output()) {
                     switch (state) {
-                        case DCF77::useless: Serial.print(F("useless")); break;
-                        case DCF77::dirty:   Serial.print(F("dirty: ")); break;
-                        case DCF77::synced:  Serial.print(F("synced:")); break;
-                        case DCF77::locked:  Serial.print(F("locked:")); break;
+                        case RadioClock::useless: Serial.print(F("useless")); break;
+                        case RadioClock::dirty:   Serial.print(F("dirty: ")); break;
+                        case RadioClock::synced:  Serial.print(F("synced:")); break;
+                        case RadioClock::locked:  Serial.print(F("locked:")); break;
                     }
 
                     Serial.print(F(" 20"));

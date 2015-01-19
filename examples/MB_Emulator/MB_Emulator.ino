@@ -131,18 +131,18 @@ void loop() {
         paddedPrint(now.second);
         Serial.print(';');
 
-        uint8_t state = DCF77_Clock::get_clock_state();
+        uint8_t state = RadioClock_Clock::get_clock_state();
         Serial.print(
-            state == DCF77::useless || state == DCF77::dirty? '#'  // not synced
+            state == RadioClock::useless || state == RadioClock::dirty? '#'  // not synced
                                                             : ' '  // good
         );
 
         Serial.print(
-            state == DCF77::synced || state == DCF77::locked? ' '  // DCF77
+            state == RadioClock::synced || state == RadioClock::locked? ' '  // DCF77
                                                             : '*'  // crystal clock
         );
 
-        digitalWrite(dcf77_signal_good_indicator_pin, state >= DCF77::locked);
+        digitalWrite(dcf77_signal_good_indicator_pin, state >= RadioClock::locked);
 
         Serial.print(now.uses_summertime? 'S': ' ');
         Serial.print(

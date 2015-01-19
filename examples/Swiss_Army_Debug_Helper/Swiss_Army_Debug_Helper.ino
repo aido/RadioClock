@@ -181,8 +181,8 @@ namespace LED_Display {
             }
 
             case 'c': { // calibration state + deviation
-                const DCF77_Frequency_Control::calibration_state_t calibration_state = DCF77_Frequency_Control::get_calibration_state();
-                int16_t deviation = abs(DCF77_Frequency_Control::get_current_deviation());
+                const RadioClock_Frequency_Control::calibration_state_t calibration_state = RadioClock_Frequency_Control::get_calibration_state();
+                int16_t deviation = abs(RadioClock_Frequency_Control::get_current_deviation());
                 uint8_t pin = lower_output_pin;
 
                 // display calibration state, blink if running unqualified
@@ -606,11 +606,11 @@ void setup() {
     Serial.print(F("Inverted Mode:  ")); Serial.println(dcf77_inverted_samples);
     Serial.print(F("Analog Mode:    ")); Serial.println(dcf77_analog_samples);
     Serial.print(F("Monitor Pin:    ")); Serial.println(LED_Display::dcf77_monitor_pin);
-    Serial.print(F("Freq. Adjust:   ")); Serial.println(DCF77_1_Khz_Generator::read_adjustment());
+    Serial.print(F("Freq. Adjust:   ")); Serial.println(RadioClock_1_Khz_Generator::read_adjustment());
 
     int8_t  adjust_steps;
     int16_t adjust;
-    DCF77_Frequency_Control::read_from_eeprom(adjust_steps, adjust);
+    RadioClock_Frequency_Control::read_from_eeprom(adjust_steps, adjust);
     Serial.print(F("EE Precision:   ")); Serial.println(adjust_steps);
     Serial.print(F("EE Freq. Adjust:")); Serial.println(adjust);
 
@@ -634,7 +634,7 @@ void loop() {
             DCF77_Clock::time_t now;
             DCF77_Clock::get_current_time(now);
 
-            DCF77_Frequency_Control::debug();
+            RadioClock_Frequency_Control::debug();
             Phase_Drift_Analysis::debug();
             //DCF77_Demodulator::debug();
 
@@ -644,7 +644,7 @@ void loop() {
             DCF77_Clock::time_t now;
             DCF77_Clock::get_current_time(now);
 
-            DCF77_Demodulator::debug();
+            RadioClock_Demodulator::debug();
             break;
         }
 
@@ -652,14 +652,14 @@ void loop() {
             DCF77_Clock::time_t now;
             DCF77_Clock::get_current_time(now);
 
-            switch (DCF77_Clock::get_clock_state()) {
-                case DCF77::useless: Serial.println(F("useless")); break;
-                case DCF77::dirty:   Serial.println(F("dirty")); break;
-                case DCF77::synced:  Serial.println(F("synced")); break;
-                case DCF77::locked:  Serial.println(F("locked")); break;
+            switch (RadioClock_Clock::get_clock_state()) {
+                case RadioClock::useless: Serial.println(F("useless")); break;
+                case RadioClock::dirty:   Serial.println(F("dirty")); break;
+                case RadioClock::synced:  Serial.println(F("synced")); break;
+                case RadioClock::locked:  Serial.println(F("locked")); break;
             }
 
-            DCF77_Demodulator::debug_verbose();
+            RadioClock_Demodulator::debug_verbose();
             Serial.println();
             break;
         }
@@ -678,11 +678,11 @@ void loop() {
                 DCF77_Clock::get_current_time(now);
 
                 if (now.month.val > 0) {
-                    switch (DCF77_Clock::get_clock_state()) {
-                        case DCF77::useless: Serial.print(F("useless:")); break;
-                        case DCF77::dirty:   Serial.print(F("dirty:  ")); break;
-                        case DCF77::synced:  Serial.print(F("synced: ")); break;
-                        case DCF77::locked:  Serial.print(F("locked: ")); break;
+                    switch (RadioClock_Clock::get_clock_state()) {
+                        case RadioClock::useless: Serial.print(F("useless:")); break;
+                        case RadioClock::dirty:   Serial.print(F("dirty:  ")); break;
+                        case RadioClock::synced:  Serial.print(F("synced: ")); break;
+                        case RadioClock::locked:  Serial.print(F("locked: ")); break;
                     }
                     Serial.print(' ');
 
