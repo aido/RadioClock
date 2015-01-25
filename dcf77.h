@@ -72,15 +72,6 @@ namespace DCF77 {
         sync_mark  = 0
     } tick_t;
 
-    typedef struct {
-        uint8_t byte_0;  // bit 16-20  // flags
-        uint8_t byte_1;  // bit 21-28  // minutes
-        uint8_t byte_2;  // bit 29-36  // hours, bit 0 of day
-        uint8_t byte_3;  // bit 37-44  // day + weekday
-        uint8_t byte_4;  // bit 45-52  // month + bit 0-2 of year
-        uint8_t byte_5;  // bit 52-58  // year + parity
-    } serialized_clock_stream;
-
     typedef struct DCF77_time_data_t : RadioClock::time_data_t {
         bool uses_summertime                : 1;  // false -> wintertime, true, summertime
         bool abnormal_transmitter_operation : 1;  // typically false
@@ -97,7 +88,7 @@ namespace DCF77 {
 }
 
 namespace DCF77_1_Khz_Generator {
-   void isr_handler();
+    void isr_handler();
 }
 
 namespace DCF77_Frequency_Control {
@@ -111,7 +102,7 @@ namespace DCF77_Encoder {
 
     void reset(DCF77::time_data_t &now);
 
-    void get_serialized_clock_stream(const DCF77::time_data_t &now, DCF77::serialized_clock_stream &data);
+    void get_serialized_clock_stream(const DCF77::time_data_t &now, RadioClock::serialized_clock_stream &data);
 
     uint8_t weekday(const DCF77::time_data_t &now);  // sunday == 0
     BCD::bcd_t bcd_weekday(const DCF77::time_data_t &now);  // sunday == 7
@@ -270,16 +261,16 @@ namespace DCF77_Minute_Decoder {
 }
 
 namespace DCF77_Second_Decoder {
-    void set_convolution_time(const DCF77::time_data_t &now); 
+    void set_convolution_time(const DCF77::time_data_t &now);
     uint8_t get_second();
-	void process_single_tick_data(const DCF77::tick_t tick_data);
+    void process_single_tick_data(const DCF77::tick_t tick_data);
     uint8_t get_prediction_match();
 
     void debug();
-	}
+}
 
 namespace DCF77_Local_Clock {
-	void setup();
+    void setup();
     void process_1_Hz_tick(const DCF77::time_data_t &decoded_time);
     void process_1_kHz_tick();
     void debug();

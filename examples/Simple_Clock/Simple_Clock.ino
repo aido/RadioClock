@@ -26,10 +26,10 @@ const uint8_t dcf77_analog_samples = 1;
 const uint8_t dcf77_monitor_pin = A4;  // A4 == d18
 
 
-uint8_t sample_input_pin() {
-    const uint8_t sampled_data =
-        dcf77_inverted_samples ^ (dcf77_analog_samples? (analogRead(dcf77_analog_sample_pin) > 200)
-                                                      : digitalRead(dcf77_sample_pin));
+bool sample_input_pin() {
+    const bool sampled_data =
+    dcf77_inverted_samples ^ (dcf77_analog_samples? (analogRead(dcf77_analog_sample_pin) > 200)
+    : digitalRead(dcf77_sample_pin));
 
     digitalWrite(dcf77_monitor_pin, sampled_data);
     return sampled_data;
@@ -65,8 +65,8 @@ void setup() {
     // rather long. About 5 minutes with a good signal, 30 minutes or longer
     // with a bad signal
     for (uint8_t state = RadioClock::useless;
-         state == RadioClock::useless || state == RadioClock::dirty;
-         state = RadioClock_Clock::get_clock_state()) {
+    state == RadioClock::useless || state == RadioClock::dirty;
+    state = RadioClock_Clock::get_clock_state()) {
 
         // wait for next sec
         DCF77_Clock::time_t now;
@@ -94,10 +94,10 @@ void loop() {
     DCF77_Clock::get_current_time(now);
     if (now.month.val > 0) {
         switch (RadioClock_Clock::get_clock_state()) {
-            case RadioClock::useless: Serial.print(F("useless ")); break;
-            case RadioClock::dirty:   Serial.print(F("dirty:  ")); break;
-            case RadioClock::synced:  Serial.print(F("synced: ")); break;
-            case RadioClock::locked:  Serial.print(F("locked: ")); break;
+        case RadioClock::useless: Serial.print(F("useless ")); break;
+        case RadioClock::dirty:   Serial.print(F("dirty:  ")); break;
+        case RadioClock::synced:  Serial.print(F("synced: ")); break;
+        case RadioClock::locked:  Serial.print(F("locked: ")); break;
         }
         Serial.print(' ');
 

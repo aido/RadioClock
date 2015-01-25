@@ -482,7 +482,7 @@ namespace DCF77_Encoder {
         return result? long_tick: short_tick;
     }
 
-    void get_serialized_clock_stream(const DCF77::time_data_t &now, DCF77::serialized_clock_stream &data) {
+    void get_serialized_clock_stream(const DCF77::time_data_t &now, RadioClock::serialized_clock_stream &data) {
         using namespace Arithmetic_Tools;
 
         // bit 16-20  // flags
@@ -923,7 +923,7 @@ namespace DCF77_Second_Decoder {
     //    --> too low and total startup time will increase
     const uint8_t lock_threshold = 12;
 
-    serialized_clock_stream convolution_kernel;
+    RadioClock::serialized_clock_stream convolution_kernel;
     // used to determine how many of the predicted bits are actually observed,
     // also used to indicate if convolution is already applied
     const uint8_t convolution_binning_not_ready = 0xff;
@@ -1498,7 +1498,7 @@ namespace DCF77_Clock_Controller {
         }
     }
 
-    void process_1_kHz_tick_data(const uint8_t sampled_data) {
+    void process_1_kHz_tick_data(const bool sampled_data) {
         DCF77_Demodulator::detector(sampled_data);
         DCF77_Local_Clock::process_1_kHz_tick();
         RadioClock_Frequency_Control::process_1_kHz_tick();
@@ -1702,7 +1702,7 @@ namespace DCF77_Clock_Controller {
 }
 
 namespace DCF77_Demodulator {
-    void decode_220ms(const uint8_t input, const uint8_t bins_to_go) {
+    void decode_220ms(const bool input, const uint8_t bins_to_go) {
         // will be called for each bin during the "interesting" 220ms
 
         static uint8_t count = 0;
@@ -1728,7 +1728,7 @@ namespace DCF77_Demodulator {
         }
     }
 
-    void detector_stage_2(const uint8_t input) {
+    void detector_stage_2(const bool input) {
         const uint8_t current_bin = RadioClock_Demodulator::bins.tick;
 
         const uint8_t threshold = 30;
@@ -1763,7 +1763,7 @@ namespace DCF77_Demodulator {
         }
     }
 
-    void detector(const uint8_t sampled_data) {
+    void detector(const bool sampled_data) {
         static uint8_t current_sample = 0;
         static uint8_t average = 0;
 
@@ -1773,7 +1773,7 @@ namespace DCF77_Demodulator {
         if (++current_sample >= RadioClock_Demodulator::samples_per_bin) {
             // once all samples for the current bin are captured the bin gets updated
             // that is each 10ms control is passed to stage 1
-            const uint8_t input = (average> RadioClock_Demodulator::samples_per_bin/2);
+            const bool input = (average> RadioClock_Demodulator::samples_per_bin/2);
 
             RadioClock_Demodulator::phase_binning(input);
 
@@ -1787,7 +1787,6 @@ namespace DCF77_Demodulator {
 
 namespace DCF77_Clock {
     typedef void (*output_handler_t)(const time_t &decoded_time);
-    typedef uint8_t (*input_provider_t)(void);
 
     void setup() {
         RadioClock_Controller::setup();

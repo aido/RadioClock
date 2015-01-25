@@ -79,7 +79,7 @@ namespace BCD {
     bool operator <  (const bcd_t a, const bcd_t b);
 
     void print(const bcd_t value);
-	void increment(bcd_t &value);
+    void increment(bcd_t &value);
 
     bcd_t int_to_bcd(const uint8_t value);
     uint8_t bcd_to_int(const bcd_t value);
@@ -126,6 +126,17 @@ namespace Arithmetic_Tools {
         return tmp;
     } ;
 
+    inline uint8_t reverse(const uint8_t value) __attribute__((always_inline));
+    inline uint8_t reverse(const uint8_t value) {
+        uint8_t tmp = value;
+
+        tmp = (tmp & 0xf0) >> 4 | (tmp & 0x0f) << 4;
+        tmp = (tmp & 0xcc) >> 2 | (tmp & 0x33) << 2;
+        tmp = (tmp & 0xaa) >> 1 | (tmp & 0x55) << 1;
+
+        return tmp;
+    } ;
+
     void minimize(uint8_t &minimum, const uint8_t value);
 
     void maximize(uint8_t &maximum, const uint8_t value);
@@ -138,7 +149,7 @@ namespace Hamming {
         uint8_t lock_max;
         uint8_t noise_max;
     } lock_quality_t;
-	
+
     template <uint8_t significant_bits>
     void score (uint8_t &bin, const BCD::bcd_t input, const BCD::bcd_t candidate) {
         using namespace Arithmetic_Tools;
@@ -147,7 +158,7 @@ namespace Hamming {
         bounded_add(bin, the_score);
     }
 
-	template <typename bins_t>
+    template <typename bins_t>
     void advance_tick(bins_t &bins) {
         const uint8_t number_of_bins = sizeof(bins.data) / sizeof(bins.data[0]);
         if (bins.tick < number_of_bins - 1) {
@@ -294,17 +305,17 @@ namespace Hamming {
                 // now 15 >= log2 >= 5
                 // multiply by 256/log2 and divide by 256
                 const uint16_t multiplier =
-                    log2 > 12? log2 > 13? log2 > 14? 256/15
-                                                   : 256/14
-                                        : 256/13
-                             : log2 > 8 ? log2 > 10? log2 > 11? 256/12
-                                                              : 256/11
-                                                   : log2 >  9? 256/10
-                                                              : 256/ 9
-                                        : log2 >  6? log2 >  7? 256/ 8
-                                                              : 256/ 7
-                                                   : log2 >  5? 256/ 6
-                                                              : 256/ 5;
+                log2 > 12? log2 > 13? log2 > 14? 256/15
+                : 256/14
+                : 256/13
+                : log2 > 8 ? log2 > 10? log2 > 11? 256/12
+                : 256/11
+                : log2 >  9? 256/10
+                : 256/ 9
+                : log2 >  6? log2 >  7? 256/ 8
+                : 256/ 7
+                : log2 >  5? 256/ 6
+                : 256/ 5;
                 quality_factor = ((uint16_t)delta * multiplier) >> 8;
 
             } else if (bins.max >= 16-3) {
@@ -316,16 +327,16 @@ namespace Hamming {
                 // delta / 3.5
                 // we know delta <= max < 16-3 = 13 --> delta <= 12
                 quality_factor = delta >= 11? 3:
-                                 delta >=  7? 2:
-                                 delta >=  4? 1:
-                                              0;
+                delta >=  7? 2:
+                delta >=  4? 1:
+                0;
 
             } else if (bins.max >= 8-3) {
                 // delta / 3
                 // we know delta <= max < 12-3 = 9 --> delta <= 8
                 quality_factor = delta >= 6? 2:
-                                 delta >= 3? 1:
-                                             0;
+                delta >= 3? 1:
+                0;
 
             } else if (bins.max >= 6-3) {
                 // delta / 2.5
@@ -361,10 +372,10 @@ namespace Hamming {
 
         for (uint8_t index = 0; index < number_of_bins; ++index) {
             Serial.print(
-                (index == bins.max_index                                          ||
-                (!uses_integrals && index == (bins.max_index+1) % number_of_bins) ||
-                (uses_integrals && (index == (bins.max_index+10) % number_of_bins || (index == (bins.max_index+20) % number_of_bins))))
-                ? '|': ',');
+            (index == bins.max_index                                          ||
+            (!uses_integrals && index == (bins.max_index+1) % number_of_bins) ||
+            (uses_integrals && (index == (bins.max_index+10) % number_of_bins || (index == (bins.max_index+20) % number_of_bins))))
+            ? '|': ',');
             Serial.print(bins.data[index], HEX);
         }
         Serial.println();
@@ -378,7 +389,7 @@ namespace Debug {
 }
 
 namespace RadioClock {
-	typedef struct {
+    typedef struct {
         BCD::bcd_t year;     // 0..99
         BCD::bcd_t month;    // 1..12
         BCD::bcd_t day;      // 1..31
@@ -389,7 +400,45 @@ namespace RadioClock {
 
     typedef struct _time_data_t : time_info_t {
         uint8_t second;      // 0..60
-     } time_data_t;
+    } time_data_t;
+
+    // DCF77
+    // =====
+    // https://en.wikipedia.org/wiki/DCF77#Time_code_interpretation
+    //
+    // byte_0:	bit 16-20  // flags
+    // byte_1:	bit 21-28  // minutes
+    // byte_2:	bit 29-36  // hours, bit 0 of day
+    // byte_3:	bit 37-44  // day + weekday
+    // byte_4:	bit 45-52  // month + bit 0-2 of year
+    // byte_5:	bit 52-58  // year + parity
+
+    // MSF
+    // ===
+    // https://en.wikipedia.org/wiki/Time_from_NPL#Protocol	
+    //
+    // byte_0A:	bit 17-24	// year
+    // byte_1A:	bit 25-32	// month + bit 0-2 day
+    // byte_2A:	bit 33-40	// bit 3-5 day + weekday + bit 0-1 hour
+    // byte_3A:	bit 41-48	// bit 2-5 hour + bit 0-3 minute
+    // byte_4A:	bit 49-56	// bit 4-6 minute + 01111
+    // byte_5A:	bit 57-59	// 110
+    //
+    // byte_0B:	bit 17-24	// 00000000
+    // byte_1B:	bit 25-32	// 00000000
+    // byte_2B:	bit 33-40	// 00000000
+    // byte_3B:	bit 41-48	// 00000000
+    // byte_4B:	bit 49-56	// 0000 + flags + parity
+    // byte_5B:	bit 57-59	// flags + parity + 0
+
+    typedef struct {
+        uint8_t byte_0;
+        uint8_t byte_1;
+        uint8_t byte_2;
+        uint8_t byte_3;
+        uint8_t byte_4;
+        uint8_t byte_5;
+    } serialized_clock_stream;
 
     typedef enum {
         useless  = 0,  // waiting for good enough signal
@@ -402,29 +451,28 @@ namespace RadioClock {
 }
 
 namespace RadioClock_Clock {
-	typedef struct _time_t : RadioClock::time_info_t {
+    typedef struct _time_t : RadioClock::time_info_t {
         BCD::bcd_t second;   // 0..60
     } time_t;
 
     // input provider will be called each millisecond and must
     // provide the input of the raw radio clock signal
-    typedef uint8_t (*input_provider_t)(void);
- 	
+    typedef bool (*input_provider_t)(void);
+
     // determine the internal clock state
-	uint8_t get_clock_state();
+    uint8_t get_clock_state();
 }
 
 namespace RadioClock_Demodulator {
-	const uint8_t bin_count = 100;
+    const uint8_t bin_count = 100;
 
     const uint16_t samples_per_second = 1000;
     const uint16_t samples_per_bin = samples_per_second / RadioClock_Demodulator::bin_count;
     const uint16_t bins_per_10ms  = RadioClock_Demodulator::bin_count / 100;
     const uint16_t bins_per_50ms  =  5 * bins_per_10ms;
-    const uint16_t bins_per_60ms  =  6 * bins_per_10ms;
     const uint16_t bins_per_100ms = 10 * bins_per_10ms;
     const uint16_t bins_per_200ms = 20 * bins_per_10ms;
-
+    const uint16_t bins_per_300ms = 30 * bins_per_10ms;
     const uint16_t bins_per_500ms = 50 * bins_per_10ms;
 
     typedef struct {
@@ -435,15 +483,36 @@ namespace RadioClock_Demodulator {
         uint32_t max;
         uint8_t max_index;
     } phase_bins;
-	
-	extern phase_bins bins;
-	
-	void setup();
-	void phase_detection();
-    void set_has_tuned_clock();
+
+    extern phase_bins bins;
+
+    void setup();
+
+    // According to Wikipedia https://en.wikipedia.org/wiki/Time_from_NPL#Shortcomings_of_the_current_signal_format
+    // the signal will show 100 ms without carrier ("1"), then 100 ms for bit A and 100 ms for bit B
+    // no carrier translates to "1", carrier translates to "0". The signal will end with 700 ms of carrier "0".
+    // The only exception is the first minute which has 500 ms of no carrier and then 500 ms with carrier.
+    // This implies: 59x"1" and  1x"0" for the first 100ms
+    // Then           7x"1" and 18x"0" for the second 100 ms as well as 35 data bits
+    // Finally        1x"1" and 37x"0" for the third  100 ms as well as 22 data bits
+    //
+    // This gives a rough estimate of
+    // 59x"1" and  1x"0" for the first 100 ms
+    // 34x"1" and 36x"0" for the second 100 ms (notice that "1" is slightly less likely to appear
+    //  8x"1" and 42x"0" notice that the dut bits have only 25% of probability for a 1 as 50% must always be zero --> count 12x"0" and 4x"1"
+    //
+    // As a consequence the filter kernel is suitable for both DCF77 and MSF
+    // However RadioClock_Demodulator::phase_detection() is not optimal for MSF but definitely more
+    // than good enough.
+    //
+    // On the other hand if you do not mind the CPU utilization a proper kernel MSF_Demodulator::phase_detection()
+    // can be used for MSF instead.
+    void phase_detection();
     uint8_t phase_binning(const uint8_t input);
-	uint16_t wrap(const uint16_t);
-	void get_quality(uint32_t &lock_max, uint32_t &noise_max);
+
+    void set_has_tuned_clock();
+    uint16_t wrap(const uint16_t);
+    void get_quality(uint32_t &lock_max, uint32_t &noise_max);
     uint8_t get_quality_factor();
 
     void debug();
@@ -455,21 +524,21 @@ namespace RadioClock_Demodulator {
 
 namespace RadioClock_1_Khz_Generator {
     void setup(const RadioClock_Clock::input_provider_t input_provider);
-	uint8_t zero_provider();
-	
-	static RadioClock_Clock::input_provider_t the_input_provider = zero_provider;
+    bool zero_provider();
+
+    extern RadioClock_Clock::input_provider_t the_input_provider;
     static int16_t adjust_pp16m = 0;
-	static int32_t cumulated_phase_deviation = 0;
-	
+    static int32_t cumulated_phase_deviation = 0;
+
     // positive_value --> increase frequency
-	// pp16m = parts per 16 million = 1 Hz @ 16 Mhz
+    // pp16m = parts per 16 million = 1 Hz @ 16 Mhz
     void adjust(const int16_t pp16m);
     int16_t read_adjustment();
-	void isr_handler();
+    void isr_handler();
 }
 
 namespace RadioClock_Frequency_Control {
-	extern volatile uint16_t elapsed_minutes;
+    extern volatile uint16_t elapsed_minutes;
     // Precision at tau min is 8 Hz == 0.5 ppm or better
     // This is because 334 m = 334 * 60 * 100 centiseconds = 2004000 centiseconds
     // Do not decrease this value!
@@ -484,17 +553,17 @@ namespace RadioClock_Frequency_Control {
     // However if a tuning beyond 100 ppm is necessary then there is something
     // fundamentally wrong with the oscillator.
     const int16_t max_total_adjust = 1600;
-	
+
     // indicator if data may be persisted to EEPROM
     extern volatile boolean data_pending;	
-	
+
     extern volatile uint16_t elapsed_centiseconds_mod_60000;
     extern volatile uint8_t  start_minute_mod_10;
 
-    void debug(); 
+    void debug();
     void setup();
     void auto_persist();  // this is slow and messes with the interrupt flag, do not call during interrupt handling
-	void adjust();
+    void adjust();
     void process_1_kHz_tick();
 
     void qualify_calibration();
@@ -506,14 +575,14 @@ namespace RadioClock_Frequency_Control {
     } calibration_state_t;
 
     extern volatile calibration_state_t calibration_state;
-	
+
     extern const int8_t calibration_second;
     calibration_state_t get_calibration_state();
     // The phase deviation is only meaningful if calibration is running.
     int16_t get_current_deviation();
     int16_t set_current_deviation(int16_t current_deviation);
     int16_t compute_phase_deviation(uint8_t current_second, uint8_t current_minute_mod_10);
-	
+
     // Offset for writing to EEPROM / reading from EEPROM
     // this is necesarry if other libraries also want to
     // use EEPROM.
@@ -564,10 +633,10 @@ namespace RadioClock_Year_Decoder {
         uint8_t max;
         uint8_t max_index;
     } year_bins;
-	
-	extern year_bins bins;
 
-	void setup();
+    extern year_bins bins;
+
+    void setup();
     void advance_year();
     BCD::bcd_t get_year();
     void get_quality(Hamming::lock_quality_t &lock_quality);
@@ -613,7 +682,7 @@ namespace RadioClock_Weekday_Decoder {
 
     extern weekday_bins bins;
 
-	void setup();
+    void setup();
     void advance_weekday();
     BCD::bcd_t get_weekday();
     void get_quality(Hamming::lock_quality_t &lock_quality);
@@ -635,8 +704,8 @@ namespace RadioClock_Day_Decoder {
     } day_bins;
 
     extern day_bins bins;
-	
-	void setup();
+
+    void setup();
     void advance_day();
     BCD::bcd_t get_day();
     void get_quality(Hamming::lock_quality_t &lock_quality);
@@ -658,7 +727,7 @@ namespace RadioClock_Hour_Decoder {
     } hour_bins;
 
     extern hour_bins bins;
-	
+
     void setup();
     void advance_hour();
     BCD::bcd_t get_hour();
@@ -694,7 +763,7 @@ namespace RadioClock_Minute_Decoder {
 namespace RadioClock_Second_Decoder {
     const uint8_t seconds_per_minute = 60;
 
-	typedef struct {
+    typedef struct {
         uint8_t data[seconds_per_minute];
         uint8_t tick;
 
@@ -704,7 +773,7 @@ namespace RadioClock_Second_Decoder {
     } sync_bins;
 
     extern sync_bins bins;
-	
+
     void setup();
     void get_quality(Hamming::lock_quality_t &lock_quality);
     uint8_t get_quality_factor();
@@ -713,7 +782,7 @@ namespace RadioClock_Second_Decoder {
 namespace RadioClock_Controller {
 
     typedef Hamming::lock_quality_t lock_quality_t;
-	
+
     typedef struct {
         struct {
             uint32_t lock_max;
@@ -732,7 +801,7 @@ namespace RadioClock_Controller {
         lock_quality_t year;
     } clock_quality_t;
 
-	typedef struct {
+    typedef struct {
         uint8_t phase;
         uint8_t second;
         uint8_t minute;
@@ -746,7 +815,7 @@ namespace RadioClock_Controller {
     void setup();	
     void on_tuned_clock();
     void auto_persist();  // this is slow and messes with the interrupt flag, do not call during interrupt handling
-	void get_quality_factor(clock_quality_factor_t &clock_quality_factor);
+    void get_quality_factor(clock_quality_factor_t &clock_quality_factor);
     uint8_t get_clock_state();
     void phase_lost_event_handler();
     void sync_lost_event_handler();
@@ -756,7 +825,7 @@ namespace RadioClock_Controller {
 namespace RadioClock_Local_Clock {
     extern RadioClock::clock_state_t clock_state;
     extern uint32_t max_unlocked_seconds;
-	
+
     void set_has_tuned_clock();
     RadioClock::clock_state_t get_state();
 }

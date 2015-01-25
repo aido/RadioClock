@@ -73,7 +73,7 @@ namespace BCD {
 }
 
 namespace Arithmetic_Tools {
-	void minimize(uint8_t &minimum, const uint8_t value) {
+    void minimize(uint8_t &minimum, const uint8_t value) {
         if (value < minimum) {
             minimum = value;
         }
@@ -108,19 +108,19 @@ namespace Debug {
 }
 
 namespace RadioClock_Clock {
-	uint8_t get_clock_state() {
-		return RadioClock_Controller::get_clock_state();
-	}
+    uint8_t get_clock_state() {
+        return RadioClock_Controller::get_clock_state();
+    }
 }
 
 namespace RadioClock_Demodulator {
-	phase_bins bins;
- 
-	void setup() {
+    phase_bins bins;
+
+    void setup() {
         Hamming::setup(bins);
     }
 
-	uint16_t wrap(const uint16_t value) {
+    uint16_t wrap(const uint16_t value) {
         // faster modulo function which avoids division
         uint16_t result = value;
         while (result >= bin_count) {
@@ -152,7 +152,7 @@ namespace RadioClock_Demodulator {
 
             integral -= (uint32_t)bins.data[bin]<<1;
             integral += (uint32_t)(bins.data[wrap(bin + bins_per_100ms)] +
-                                   bins.data[wrap(bin + bins_per_200ms)]);
+            bins.data[wrap(bin + bins_per_200ms)]);
         }
 
         // max_index indicates the position of the 200ms second signal window.
@@ -267,7 +267,7 @@ namespace RadioClock_Demodulator {
 
             integral -= (uint32_t)bins.data[bin]<<1;
             integral += (uint32_t)(bins.data[wrap(bin + bins_per_100ms)] +
-                                   bins.data[wrap(bin + bins_per_200ms)]);
+            bins.data[wrap(bin + bins_per_200ms)]);
 
             Serial.print(max_index);
             Serial.print(F(", "));
@@ -304,11 +304,14 @@ namespace RadioClock_Demodulator {
 }
 
 namespace RadioClock_1_Khz_Generator {
-	uint8_t zero_provider() {
+
+    extern RadioClock_Clock::input_provider_t the_input_provider = zero_provider;
+
+    bool zero_provider() {
         return 0;
     }
 
-	void adjust(const int16_t pp16m) {
+    void adjust(const int16_t pp16m) {
         const uint8_t prev_SREG = SREG;
         cli();
         // positive_value --> increase frequency
@@ -398,11 +401,11 @@ namespace RadioClock_Frequency_Control {
 
     // 2*tau_max = 32 000 000 centisecond ticks = 5333 minutes
     volatile uint16_t elapsed_minutes;
- 
-	// indicator if data may be persisted to EEPROM
+
+    // indicator if data may be persisted to EEPROM
     volatile boolean data_pending;
 
-	// 60000 centiseconds = 10 minutes
+    // 60000 centiseconds = 10 minutes
     // maximum drift in 32 000 000 centiseconds @ 900 ppm would result
     // in a drift of +/- 28800 centiseconds
     // thus it is uniquely measured if we know it mod 60 000
@@ -428,7 +431,7 @@ namespace RadioClock_Frequency_Control {
     void qualify_calibration() {
         calibration_state.qualified = true;
     };
-	
+    
     // do not call during ISRs
     void auto_persist() {
         // ensure that reading of data can not be interrupted!!
@@ -450,10 +453,10 @@ namespace RadioClock_Frequency_Control {
             read_from_eeprom(ee_precision, ee_adjust);
 
             if (get_confirmed_precision() < abs(ee_precision) ||        // - precision better than it used to be
-                ( abs(ee_precision) < 8 &&                        // - precision better than 8 Hz or 0.5 ppm @ 16 MHz
-                  abs(ee_adjust-adjust) > 8 )           ||        //   deviation worse than 8 Hz (thus 16 Hz or 1 ppm)
-                ( get_confirmed_precision() == 1 &&                     // - It takes more than 1 day to arrive at 1 Hz precision
-                  abs(ee_adjust-adjust) > 0 ) )                   //   thus it acceptable to always write
+                    ( abs(ee_precision) < 8 &&                        // - precision better than 8 Hz or 0.5 ppm @ 16 MHz
+                        abs(ee_adjust-adjust) > 8 )           ||        //   deviation worse than 8 Hz (thus 16 Hz or 1 ppm)
+                    ( get_confirmed_precision() == 1 &&                     // - It takes more than 1 day to arrive at 1 Hz precision
+                        abs(ee_adjust-adjust) > 0 ) )                   //   thus it acceptable to always write
             {
                 cli();
                 const int16_t new_ee_adjust = adjust;
@@ -488,9 +491,9 @@ namespace RadioClock_Frequency_Control {
 
     int16_t compute_phase_deviation(uint8_t current_second, uint8_t current_minute_mod_10) {
         int32_t deviation=
-             ((int32_t) elapsed_centiseconds_mod_60000) -
-             ((int32_t) current_second        - (int32_t) calibration_second)  * 100 -
-             ((int32_t) current_minute_mod_10 - (int32_t) start_minute_mod_10) * 6000;
+        ((int32_t) elapsed_centiseconds_mod_60000) -
+        ((int32_t) current_second        - (int32_t) calibration_second)  * 100 -
+        ((int32_t) current_minute_mod_10 - (int32_t) start_minute_mod_10) * 6000;
 
         // ensure we are between 30000 and -29999
         while (deviation >  30000) { deviation -= 60000; }
@@ -506,7 +509,7 @@ namespace RadioClock_Frequency_Control {
     int16_t get_current_deviation() {
         return deviation;
     }
-	
+    
     int16_t set_current_deviation(int16_t get_current_deviation) {
         deviation = get_current_deviation;
     }
@@ -574,7 +577,7 @@ namespace RadioClock_Frequency_Control {
     void read_from_eeprom(int8_t &precision, int16_t &adjust) {
         uint16_t eeprom = eeprom_base;
         if (eeprom_read_byte((const uint8_t *)(eeprom++)) == ID_u &&
-            eeprom_read_byte((const uint8_t *)(eeprom++)) == ID_k) {
+                eeprom_read_byte((const uint8_t *)(eeprom++)) == ID_k) {
             uint8_t ee_precision = eeprom_read_byte((const uint8_t *)(eeprom++));
             if (ee_precision == eeprom_read_byte((const uint8_t *)(eeprom++))) {
                 const uint16_t ee_adjust = eeprom_read_word((const uint16_t *)eeprom);
@@ -617,7 +620,7 @@ namespace RadioClock_Frequency_Control {
 namespace RaidoClock_Decade_Decoder {
     decade_bins bins;
 
-	void advance_decade() {
+    void advance_decade() {
         Hamming::advance_tick(bins);
     }
 
@@ -645,14 +648,14 @@ namespace RaidoClock_Decade_Decoder {
 
 namespace RadioClock_Year_Decoder {
     year_bins bins;
-	
+    
     void advance_year() {
         Hamming::advance_tick(bins);
         if (Hamming::get_time_value(bins).val == 0) {
             RaidoClock_Decade_Decoder::advance_decade();
         }
     }	
-	void get_quality(Hamming::lock_quality_t &lock_quality) {
+    void get_quality(Hamming::lock_quality_t &lock_quality) {
         Hamming::get_quality(bins, lock_quality);
 
         Hamming::lock_quality_t decade_lock_quality;
@@ -694,12 +697,12 @@ namespace RadioClock_Year_Decoder {
 }
 
 namespace RadioClock_Month_Decoder {
-     month_bins bins;
+    month_bins bins;
 
-	 void advance_month() {
+    void advance_month() {
         Hamming::advance_tick(bins);
     }
-	
+    
     void get_quality(Hamming::lock_quality_t &lock_quality) {
         Hamming::get_quality(bins, lock_quality);
     }
@@ -724,8 +727,8 @@ namespace RadioClock_Month_Decoder {
 
 namespace RadioClock_Weekday_Decoder {
     weekday_bins bins;
-	
-	    void advance_weekday() {
+    
+    void advance_weekday() {
         Hamming::advance_tick(bins);
     }
 
@@ -779,10 +782,10 @@ namespace RadioClock_Day_Decoder {
         Hamming::debug(bins);
     }
 }
-	
+
 namespace RadioClock_Hour_Decoder {
     hour_bins bins;
-	
+    
     void advance_hour() {
         Hamming::advance_tick(bins);
     }
@@ -810,7 +813,7 @@ namespace RadioClock_Hour_Decoder {
 }
 
 namespace RadioClock_Minute_Decoder {
-	minute_bins bins;
+    minute_bins bins;
 
     void advance_minute() {
         Hamming::advance_tick(bins);
@@ -929,13 +932,13 @@ namespace RadioClock_Controller {
             RadioClock_Year_Decoder::setup();
         }
     }
-	
+    
     void setup() {
         RadioClock_Demodulator::setup();
         RadioClock_Controller::phase_lost_event_handler();
         RadioClock_Frequency_Control::setup();
     }
-	
+    
     void auto_persist() {
         RadioClock_Frequency_Control::auto_persist();
     }
@@ -947,12 +950,12 @@ namespace RadioClock_Controller {
 
 namespace RadioClock_Local_Clock {
     RadioClock::clock_state_t clock_state = RadioClock::useless;
-	uint32_t max_unlocked_seconds = 3000;
+    uint32_t max_unlocked_seconds = 3000;
 
     void set_has_tuned_clock() {
         max_unlocked_seconds = 30000;
     }
-	
+    
     RadioClock::clock_state_t get_state() {
         return RadioClock_Local_Clock::clock_state;
     }
